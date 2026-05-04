@@ -55,7 +55,6 @@ register transfers:
 status flags & control:
 - `sec` / `clc`  ; set / clear carry flag
 - `sei` / `cli`  ; set / clear interrupt disable
-- `page imm`     ; non-standard 6502: sets mapping page for >256B external serial memory 
 
 control flow & subroutines:
 - `jmp addr`     ; unconditional jump
@@ -68,11 +67,16 @@ control flow & subroutines:
 - `rti`          ; return from interrupt (pops SR, then PC)
 - `pha` / `pla`  ; push accumulator / pull accumulator
 
+## datapath architecture
+the ocpu features a dual-core architectural approach utilizing a multi-level fsm hierarchy to manage execution and synchronization:
+- master fsm: a top-level controller responsible for issuing global states such as `run`, `halt`, or `simd`. it dictates whether the cores run independently or operate in lockstep.
+- internal core fsms: each core (core 0 and core 1) possesses its own local multi-cycle fsm. when in standard executing modes, these handle the independent fetch-decode-execute loops.
+- simd execution: when the master supervisor engages simd mode, both core 0 and core 1 synchronize to execute identical instruction bytes fetched from memory simultaneously. rather than hardcoding memory banks in hardware, data divergence is achieved using the index registers (`x` and `y`). by initializing each core's index registers to different offsets before entering simd mode, a single instruction like `lda array,x` allows each core to natively access different data elements simultaneously.
+- accumulator-based logic: to severely constrain the flip-flop footprint required per core, the datapath relies purely on an accumulator and strictly defined index registers (x, y) rather than a generalized register file.
+
 ## features
-- the programmer-visible registers include an 8-bit accumulator (a), index registers (x, y), and an 8-bit stack pointer (SP).
-- the internal datapath consists of a program counter (PC), instruction register (IR), and memory data register (MDR).
-- the peripheral registers include an 8-bit page register along with interrupt vector and enable registers.
-- the control FSM is a multi-cycle state machine that takes advantage of the accumulator-based datapath. this drastically minimizes the sequential logic area footprint.
-- the primary instruction and data memory operates externally via QSPI, SPI, or UART to conserve logic area and highly constrained ASIC pins. the FSM incorporates wait states to handle serial data fetching directly into the MDR and IR.
-- the controllable target PLL behaves independently so the CPU clock speed can be dynamically governed externally to control power draw and test frequency bounds.
+- the programmer-visible registers include an 8-bit accumulator (a), index registers (x, y), and an 8-bit stack pointer (sp).
+- the internal datapath consists of a program counter (pc), instruction register (ir), and memory data register (mdr). note that the pc is 16-bit, allowing standard 64kb addressability natively.
+- the peripheral registers include interrupt vector and enable registers. to securely access mbits of external memory beyond the standard 64kb address space without complicating external peripheral logic, a zero-page memory-mapped i/o (mmio) banking register is used. writing to address `0xff` (e.g., `sta $ff`) inherently flips the upper memory lines sent from the cpu out to the external serial memory, maintaining hardware simplicity and 100% isa compatibility with standard 6502 compilers.
+- the controllable target pll behaves independently so the cpu clock speed can be dynamically governed externally to control power draw and test frequency bounds.
 

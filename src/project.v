@@ -1,8 +1,3 @@
-/*
- * Copyright (c) 2024 Uri Shaked
- * SPDX-License-Identifier: Apache-2.0
- */
-
 `default_nettype none
 
 module tt_um_ocpu (
@@ -33,12 +28,20 @@ module tt_um_ocpu (
     // ==========================================
     // FSM States
     // ==========================================
-    localparam STATE_RESET = 0,
-               STATE_FETCH = 1,
-               STATE_DECODE = 2,
-               STATE_EXECUTE = 3;
+    localparam MASTER_STATE_INIT = 0,
+               MASTER_STATE_RUN = 1,
+               MASTER_STATE_HALT = 2,
+               MASTER_STATE_SIMD = 3;
+
+    localparam CORE_STATE_RESET = 0,
+               CORE_STATE_FETCH = 1,
+               CORE_STATE_DECODE = 2,
+               CORE_STATE_EXECUTE = 3,
+               CORE_STATE_HALTED = 4;
                
-    reg [2:0] state;
+    reg [1:0] master_state;
+    reg [2:0] core0_state;
+    reg [2:0] core1_state;
     
     // Status Register Flags
     wire flag_c = sr[0]; // Carry
@@ -58,7 +61,10 @@ module tt_um_ocpu (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= STATE_RESET;
+            master_state <= MASTER_STATE_INIT;
+            core0_state <= CORE_STATE_RESET;
+            core1_state <= CORE_STATE_RESET;
+            
             a  <= 0;
             x  <= 0;
             y  <= 0;
@@ -69,29 +75,54 @@ module tt_um_ocpu (
             mdr <= 0;
             addr <= 0;
         end else begin
-            case (state)
-                STATE_RESET: begin
-                    // Initialize PC from reset vector eventually
-                    state <= STATE_FETCH;
+            // Master FSM
+            case (master_state)
+                MASTER_STATE_INIT: begin
+                    master_state <= MASTER_STATE_RUN;
+                end
+                MASTER_STATE_RUN: begin
+                    // Control core0 and core1 Execution
+                end
+                MASTER_STATE_HALT: begin
+                    // Halt execution
+                end
+                MASTER_STATE_SIMD: begin
+                    // Lock-step execution for both cores
+                end
+            endcase
+
+            // Core 0 FSM
+            case (core0_state)
+                CORE_STATE_RESET: begin
+                    if (master_state == MASTER_STATE_RUN || master_state == MASTER_STATE_SIMD)
+                        core0_state <= CORE_STATE_FETCH;
                 end
                 
-                STATE_FETCH: begin
-                    // Fetch instruction byte
-                    // Next state: wait for serial memory or DECODE
-                    state <= STATE_DECODE;
+                CORE_STATE_FETCH: begin
+                    core0_state <= CORE_STATE_DECODE;
                 end
                 
-                STATE_DECODE: begin
-                    // Load IR and transition to specific execute cycles based on opcode
-                    state <= STATE_EXECUTE;
+                CORE_STATE_DECODE: begin
+                    core0_state <= CORE_STATE_EXECUTE;
                 end
                 
-                STATE_EXECUTE: begin
-                    // Execute the instruction, adjust PC
-                    state <= STATE_FETCH;
+                CORE_STATE_EXECUTE: begin
+                    core0_state <= CORE_STATE_FETCH;
                 end
                 
-                default: state <= STATE_RESET;
+                CORE_STATE_HALTED: begin
+                    // Wait for master FSM
+                end
+                default: core0_state <= CORE_STATE_RESET;
+            endcase
+
+            // Core 1 FSM (placeholder logic, would replicate or use submodule)
+            case (core1_state)
+                CORE_STATE_RESET: begin
+                    if (master_state == MASTER_STATE_RUN || master_state == MASTER_STATE_SIMD)
+                        core1_state <= CORE_STATE_FETCH;
+                end
+                default: core1_state <= CORE_STATE_RESET;
             endcase
         end
     end
