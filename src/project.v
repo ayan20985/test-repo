@@ -10,7 +10,7 @@ module tt_um_ocpu (
     input  wire       clk,      // clock signal.
     input  wire       rst_n     // active low reset signal.
 );
-
+ reg cache [7:0][31:0];
     // shared system registers
     reg [7:0] mmio_bank;     // mmio bank register for memory paging beyond 64kb.
     reg [7:0] oc_cache;      // overclocking diagnostic cache register.
