@@ -68,10 +68,9 @@ control flow & subroutines:
 - `pha` / `pla`  ; push accumulator / pull accumulator
 
 ## datapath architecture
-the ocpu features a dual-core architectural approach utilizing a multi-level fsm hierarchy to manage execution and synchronization:
-- master fsm: a top-level controller responsible for issuing global states such as `run`, `halt`, or `simd`. it dictates whether the cores run independently or operate in lockstep.
-- internal core fsms: each core (core 0 and core 1) possesses its own local multi-cycle fsm. when in standard executing modes, these handle the independent fetch-decode-execute loops.
-- simd execution: when the master supervisor engages simd mode, both core 0 and core 1 synchronize to execute identical instruction bytes fetched from memory simultaneously. rather than hardcoding memory banks in hardware, data divergence is achieved using the index registers (`x` and `y`). by initializing each core's index registers to different offsets before entering simd mode, a single instruction like `lda array,x` allows each core to natively access different data elements simultaneously.
+the ocpu features a single-core architectural approach utilizing a multi-level fsm hierarchy to manage execution:
+- master fsm: a top-level controller responsible for issuing global states such as `run` and `halt`.
+- internal core fsm: a local multi-cycle fsm that handles the fetch-decode-execute loop.
 - accumulator-based logic: to severely constrain the flip-flop footprint required per core, the datapath relies purely on an accumulator and strictly defined index registers (x, y) rather than a generalized register file.
 
 ## features

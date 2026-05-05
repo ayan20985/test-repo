@@ -16,6 +16,7 @@ this folder contains a verilator based simulation harness and a small assembler 
 use key=value lines. keys are compared against the .out file.
 - max_cycles sets an upper bound for the run
 - stop_pc stops when core0 pc matches the value
+- the core is single-core, so use core0.* keys for register checks
 
 example:
 core0.a=0x07
