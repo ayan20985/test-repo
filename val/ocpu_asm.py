@@ -235,6 +235,12 @@ def main():
     labels = first_pass(lines)
     data = second_pass(lines, labels)
     out_path.write_bytes(data)
+    txt_path = Path(str(out_path) + ".txt")
+    with txt_path.open("w") as handle:
+        for offset in range(0, len(data), 16):
+            chunk = data[offset:offset + 16]
+            hex_bytes = " ".join(f"{b:02x}" for b in chunk)
+            handle.write(f"{offset:04x}: {hex_bytes}\n")
     return 0
 
 

@@ -129,7 +129,7 @@ int main(int argc, char **argv) {
     while (cycles < max_cycles) {
         tick(top, &emu, &cycles);
         if (stop_pc != 0xffffffffu) {
-            if (static_cast<uint32_t>(top->dbg_core0_pc) == stop_pc) {
+            if (static_cast<uint32_t>(top->dbg_pc) == stop_pc) {
                 break;
             }
         }
@@ -141,21 +141,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    std::fprintf(out, "core0.a=0x%02x\n", static_cast<unsigned>(top->dbg_core0_a));
-    std::fprintf(out, "core0.x=0x%02x\n", static_cast<unsigned>(top->dbg_core0_x));
-    std::fprintf(out, "core0.y=0x%02x\n", static_cast<unsigned>(top->dbg_core0_y));
-    std::fprintf(out, "core0.sp=0x%02x\n", static_cast<unsigned>(top->dbg_core0_sp));
-    std::fprintf(out, "core0.sr=0x%02x\n", static_cast<unsigned>(top->dbg_core0_sr));
-    std::fprintf(out, "core0.ir=0x%02x\n", static_cast<unsigned>(top->dbg_core0_ir));
-    std::fprintf(out, "core0.pc=0x%04x\n", static_cast<unsigned>(top->dbg_core0_pc));
-
-    std::fprintf(out, "core1.a=0x%02x\n", static_cast<unsigned>(top->dbg_core1_a));
-    std::fprintf(out, "core1.x=0x%02x\n", static_cast<unsigned>(top->dbg_core1_x));
-    std::fprintf(out, "core1.y=0x%02x\n", static_cast<unsigned>(top->dbg_core1_y));
-    std::fprintf(out, "core1.sp=0x%02x\n", static_cast<unsigned>(top->dbg_core1_sp));
-    std::fprintf(out, "core1.sr=0x%02x\n", static_cast<unsigned>(top->dbg_core1_sr));
-    std::fprintf(out, "core1.ir=0x%02x\n", static_cast<unsigned>(top->dbg_core1_ir));
-    std::fprintf(out, "core1.pc=0x%04x\n", static_cast<unsigned>(top->dbg_core1_pc));
+    std::fprintf(out, "core.a=0x%02x\n", static_cast<unsigned>(top->dbg_a));
+    std::fprintf(out, "core.x=0x%02x\n", static_cast<unsigned>(top->dbg_x));
+    std::fprintf(out, "core.y=0x%02x\n", static_cast<unsigned>(top->dbg_y));
+    std::fprintf(out, "core.sp=0x%02x\n", static_cast<unsigned>(top->dbg_sp));
+    std::fprintf(out, "core.sr=0x%02x\n", static_cast<unsigned>(top->dbg_sr));
+    std::fprintf(out, "core.ir=0x%02x\n", static_cast<unsigned>(top->dbg_ir));
+    std::fprintf(out, "core.pc=0x%04x\n", static_cast<unsigned>(top->dbg_pc));
 
     std::fprintf(out, "mmio.bank=0x%02x\n", static_cast<unsigned>(top->dbg_mmio_bank));
     std::fprintf(out, "mmio.cache=0x%02x\n", static_cast<unsigned>(top->dbg_oc_cache));

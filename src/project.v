@@ -9,6 +9,18 @@ module tt_um_ocpu (
     input  wire       ena,      // always 1 when the design is powered, so you can ignore it.
     input  wire       clk,      // clock signal.
     input  wire       rst_n     // active low reset signal.
+`ifdef OCPU_SIM
+    ,
+    output wire [7:0] dbg_a,
+    output wire [7:0] dbg_x,
+    output wire [7:0] dbg_y,
+    output wire [7:0] dbg_sp,
+    output wire [7:0] dbg_sr,
+    output wire [7:0] dbg_ir,
+    output wire [15:0] dbg_pc,
+    output wire [7:0] dbg_mmio_bank,
+    output wire [7:0] dbg_oc_cache
+`endif
 );
  reg cache [7:0][31:0];
     // shared system registers
@@ -40,6 +52,15 @@ module tt_um_ocpu (
         .rst_n(rst_n),
         .run_enable(core0_run_en),
         .is_halted(core0_halted),
+`ifdef OCPU_SIM
+        .dbg_a(dbg_a),
+        .dbg_x(dbg_x),
+        .dbg_y(dbg_y),
+        .dbg_sp(dbg_sp),
+        .dbg_sr(dbg_sr),
+        .dbg_ir(dbg_ir),
+        .dbg_pc(dbg_pc),
+`endif
         .out_pc(core0_pc),
         .force_pc_en(1'b0),
         .force_pc_val(16'b0),
@@ -67,6 +88,10 @@ module tt_um_ocpu (
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
     wire _unused_ok = &{ena, ui_in[7:1], uio_in};
+`ifdef OCPU_SIM
+    assign dbg_mmio_bank = mmio_bank;
+    assign dbg_oc_cache = oc_cache;
+`endif
 
     reg        spi_req;
     reg        spi_rw;
@@ -91,7 +116,8 @@ module tt_um_ocpu (
     );
 
     localparam ARB_IDLE    = 2'd0,
-               ARB_C0_REQ  = 2'd1;
+               ARB_C0_REQ  = 2'd1,
+               ARB_C0_RESP = 2'd2;
     
     reg [1:0] arb_state;
 
@@ -137,9 +163,13 @@ module tt_um_ocpu (
                     if (spi_ready && spi_req) begin
                         spi_req <= 0;
                         c0_mem_rdata <= spi_rdata;
-                        c0_mem_ready <= 1;
-                        arb_state <= ARB_IDLE;
+                        arb_state <= ARB_C0_RESP;
                     end
+                end
+
+                ARB_C0_RESP: begin
+                    c0_mem_ready <= 1;
+                    arb_state <= ARB_IDLE;
                 end
 
                 default: arb_state <= ARB_IDLE;
