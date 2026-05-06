@@ -55,6 +55,49 @@ module ocpu_core (
                STATE_POP       = 5'd11,
                STATE_HALTED    = 5'd12;
 
+    localparam [5:0] OP_LDA_IMM   = 6'h00,
+                     OP_LDA_ABS   = 6'h01,
+                     OP_LDA_ABS_X = 6'h02,
+                     OP_LDA_IND_Y = 6'h03,
+                     OP_LDX_IMM   = 6'h04,
+                     OP_LDX_ABS   = 6'h05,
+                     OP_LDY_IMM   = 6'h06,
+                     OP_LDY_ABS   = 6'h07,
+                     OP_STA_ABS   = 6'h08,
+                     OP_STA_ABS_X = 6'h09,
+                     OP_STA_IND_Y = 6'h0A,
+                     OP_STX_ABS   = 6'h0B,
+                     OP_STY_ABS   = 6'h0C,
+                     OP_ADC_ABS   = 6'h0D,
+                     OP_SBC_ABS   = 6'h0E,
+                     OP_AND_ABS   = 6'h0F,
+                     OP_EOR_ABS   = 6'h10,
+                     OP_ORA_ABS   = 6'h11,
+                     OP_ASL       = 6'h12,
+                     OP_LSR       = 6'h13,
+                     OP_INX       = 6'h14,
+                     OP_DEX       = 6'h15,
+                     OP_INY       = 6'h16,
+                     OP_DEY       = 6'h17,
+                     OP_TAX       = 6'h18,
+                     OP_TXA       = 6'h19,
+                     OP_TAY       = 6'h1A,
+                     OP_TYA       = 6'h1B,
+                     OP_SEC       = 6'h1C,
+                     OP_CLC       = 6'h1D,
+                     OP_SEI       = 6'h1E,
+                     OP_CLI       = 6'h1F,
+                     OP_JMP       = 6'h20,
+                     OP_JSR       = 6'h21,
+                     OP_RTS       = 6'h22,
+                     OP_RTI       = 6'h23,
+                     OP_PHA       = 6'h24,
+                     OP_PLA       = 6'h25,
+                     OP_BEQ       = 6'h26,
+                     OP_BNE       = 6'h27,
+                     OP_BCS       = 6'h28,
+                     OP_BCC       = 6'h29;
+
     reg [4:0] state;
     
     assign is_halted = (state == STATE_HALTED);
@@ -102,12 +145,14 @@ module ocpu_core (
                 
                 STATE_DECODE: begin
                     case (ir)
-                        8'hA9, 8'hA2, 8'hA0, 8'hF0, 8'hD0, 8'hB0, 8'h90: state <= STATE_OP1; // immediate / rel
-                        8'hAD, 8'hAE, 8'hAC, 8'h8D, 8'h8E, 8'h8C, 8'h6D, 8'hED, 8'h2D, 8'h4D, 8'h0D, 8'h4C, 8'h20: state <= STATE_OP1; // abs
-                        8'hBD, 8'h9D: state <= STATE_OP1; // abs, x
-                        8'hB1, 8'h91: state <= STATE_OP1; // ind, y
-                        8'h0A, 8'h4A, 8'hE8, 8'hCA, 8'hC8, 8'h88, 8'hAA, 8'h8A, 8'hA8, 8'h98, 8'h38, 8'h18, 8'h78, 8'h58, 8'h60, 8'h40: state <= STATE_EXECUTE; // implied
-                        8'h48, 8'h68: state <= STATE_EXECUTE; // push / pop
+                        OP_LDA_IMM, OP_LDX_IMM, OP_LDY_IMM, OP_BEQ, OP_BNE, OP_BCS, OP_BCC: state <= STATE_OP1; // immediate / rel
+                        OP_LDA_ABS, OP_LDX_ABS, OP_LDY_ABS, OP_STA_ABS, OP_STX_ABS, OP_STY_ABS,
+                        OP_ADC_ABS, OP_SBC_ABS, OP_AND_ABS, OP_EOR_ABS, OP_ORA_ABS, OP_JMP, OP_JSR: state <= STATE_OP1; // abs
+                        OP_LDA_ABS_X, OP_STA_ABS_X: state <= STATE_OP1; // abs, x
+                        OP_LDA_IND_Y, OP_STA_IND_Y: state <= STATE_OP1; // ind, y
+                        OP_ASL, OP_LSR, OP_INX, OP_DEX, OP_INY, OP_DEY, OP_TAX, OP_TXA, OP_TAY, OP_TYA,
+                        OP_SEC, OP_CLC, OP_SEI, OP_CLI, OP_RTS, OP_RTI: state <= STATE_EXECUTE; // implied
+                        OP_PHA, OP_PLA: state <= STATE_EXECUTE; // push / pop
                         default: state <= STATE_FETCH; // nop handling
                     endcase
                 end
@@ -119,13 +164,13 @@ module ocpu_core (
                         mem_addr <= pc;
                     end
                     if (mem_ready) begin
-                        ea[5:0] <= mem_rdata;
-                        ea[15:6] <= 10'b0;
+                        ea <= {10'h00, mem_rdata};
                         mem_req <= 0;
                         pc <= pc + 1;
-                        if (ir == 8'hA9 || ir == 8'hA2 || ir == 8'hA0 || ir == 8'hF0 || ir == 8'hD0 || ir == 8'hB0 || ir == 8'h90) begin
+                        if (ir == OP_LDA_IMM || ir == OP_LDX_IMM || ir == OP_LDY_IMM ||
+                            ir == OP_BEQ || ir == OP_BNE || ir == OP_BCS || ir == OP_BCC) begin
                             state <= STATE_EXECUTE;
-                        end else if (ir == 8'hB1 || ir == 8'h91) begin
+                        end else if (ir == OP_LDA_IND_Y || ir == OP_STA_IND_Y) begin
                             state <= STATE_IND_Y1;
                         end else begin
                             state <= STATE_OP2;
@@ -142,19 +187,19 @@ module ocpu_core (
                     if (mem_ready) begin
                         mem_req <= 0;
                         pc <= pc + 1;
-                        if (ir == 8'hBD || ir == 8'h9D) begin
-                            ea <= {mem_rdata, ea[7:0]} + x;
+                        if (ir == OP_LDA_ABS_X || ir == OP_STA_ABS_X) begin
+                            ea <= {mem_rdata, ea[5:0]} + x;
                         end else begin
-                            ea <= {mem_rdata, ea[7:0]};
+                            ea <= {mem_rdata, ea[5:0]};
                         end
                         
-                        if (ir == 8'h4C || ir == 8'h20) begin
+                        if (ir == OP_JMP || ir == OP_JSR) begin
                             state <= STATE_EXECUTE;
-                        end else if (ir == 8'h8D || ir == 8'h8E || ir == 8'h8C || ir == 8'h9D) begin
-                            memAddr <= (ir == 8'hBD || ir == 8'h9D) ? ({mem_rdata, ea[7:0]} + x) : ({mem_rdata, ea[7:0]});
+                        end else if (ir == OP_STA_ABS || ir == OP_STA_ABS_X || ir == OP_STA_IND_Y || ir == OP_STX_ABS || ir == OP_STY_ABS) begin
+                            memAddr <= (ir == OP_LDA_ABS_X || ir == OP_STA_ABS_X) ? ({mem_rdata, ea[5:0]} + x) : ({mem_rdata, ea[5:0]});
                             state <= STATE_MEM_WRITE;
                         end else begin
-                            memAddr <= (ir == 8'hBD || ir == 8'h9D) ? ({mem_rdata, ea[7:0]} + x) : ({mem_rdata, ea[7:0]});
+                            memAddr <= (ir == OP_LDA_ABS_X || ir == OP_STA_ABS_X) ? ({mem_rdata, ea[5:0]} + x) : ({mem_rdata, ea[5:0]});
                             state <= STATE_MEM_READ;
                         end
                     end
@@ -184,7 +229,7 @@ module ocpu_core (
                         mem_req <= 0;
                         ea <= {mem_rdata, t1} + y;
                         memAddr <= {mem_rdata, t1} + y;
-                        if (ir == 8'h91) state <= STATE_MEM_WRITE;
+                        if (ir == OP_STA_IND_Y) state <= STATE_MEM_WRITE;
                         else state <= STATE_MEM_READ;
                     end
                 end
@@ -207,9 +252,9 @@ module ocpu_core (
                         mem_req <= 1;
                         mem_rw <= 1;
                         mem_addr <= memAddr;
-                        if (ir == 8'h8D || ir == 8'h9D || ir == 8'h91) mem_wdata <= a;
-                        else if (ir == 8'h8E) mem_wdata <= x;
-                        else if (ir == 8'h8C) mem_wdata <= y;
+                        if (ir == OP_STA_ABS || ir == OP_STA_ABS_X || ir == OP_STA_IND_Y) mem_wdata <= a;
+                        else if (ir == OP_STX_ABS) mem_wdata <= x;
+                        else if (ir == OP_STY_ABS) mem_wdata <= y;
                     end
                     if (mem_ready) begin
                         mem_req <= 0;
@@ -220,63 +265,65 @@ module ocpu_core (
 
                 STATE_EXECUTE: begin
                     case (ir)
-                        8'hA9: begin a <= ea[7:0]; sr[1] <= (ea[7:0]==0); sr[7] <= ea[7]; end // lda #
-                        8'hAD, 8'hBD, 8'hB1: begin a <= mdr; sr[1] <= (mdr==0); sr[7] <= mdr[7]; end // lda abs / abs,x / ind,y
-                        8'hA2: begin x <= ea[7:0]; sr[1] <= (ea[7:0]==0); sr[7] <= ea[7]; end // ldx #
-                        8'hAE: begin x <= mdr; sr[1] <= (mdr==0); sr[7] <= mdr[7]; end // ldx abs
-                        8'hA0: begin y <= ea[7:0]; sr[1] <= (ea[7:0]==0); sr[7] <= ea[7]; end // ldy #
-                        8'hAC: begin y <= mdr; sr[1] <= (mdr==0); sr[7] <= mdr[7]; end // ldy abs
-                        8'h6D: begin // adc
-                            {sr[0], a} <= a + mdr + sr[0];
-                            sr[1] <= (a + mdr + sr[0] == 0);
-                            sr[7] <= a[7];
+                        OP_LDA_IMM: begin a <= ea[5:0]; sr[1] <= (ea[5:0]==0); sr[5] <= ea[5]; end // lda #
+                        OP_LDA_ABS, OP_LDA_ABS_X, OP_LDA_IND_Y: begin a <= mdr; sr[1] <= (mdr==0); sr[5] <= mdr[5]; end // lda abs / abs,x / ind,y
+                        OP_LDX_IMM: begin x <= ea[5:0]; sr[1] <= (ea[5:0]==0); sr[5] <= ea[5]; end // ldx #
+                        OP_LDX_ABS: begin x <= mdr; sr[1] <= (mdr==0); sr[5] <= mdr[5]; end // ldx abs
+                        OP_LDY_IMM: begin y <= ea[5:0]; sr[1] <= (ea[5:0]==0); sr[5] <= ea[5]; end // ldy #
+                        OP_LDY_ABS: begin y <= mdr; sr[1] <= (mdr==0); sr[5] <= mdr[5]; end // ldy abs
+                        OP_ADC_ABS: begin // adc
+                            automatic logic [6:0] adc_result = a + mdr + sr[0];
+                            {sr[0], a} <= adc_result;
+                            sr[1] <= (adc_result[5:0] == 0);
+                            sr[5] <= adc_result[5];
                         end
-                        8'hED: begin // sbc
-                            {sr[0], a} <= a - mdr - ~sr[0]; // simple inverted carry sub
-                            sr[1] <= (a - mdr - ~sr[0] == 0);
-                            sr[7] <= a[7];
+                        OP_SBC_ABS: begin // sbc
+                            automatic logic [6:0] sbc_result = a - mdr - ~sr[0];
+                            {sr[0], a} <= sbc_result;
+                            sr[1] <= (sbc_result[5:0] == 0);
+                            sr[5] <= sbc_result[5];
                         end
-                        8'h2D: begin a <= a & mdr; sr[1] <= ((a & mdr)==0); sr[7] <= a[7]; end // and
-                        8'h4D: begin a <= a ^ mdr; sr[1] <= ((a ^ mdr)==0); sr[7] <= a[7]; end // eor
-                        8'h0D: begin a <= a | mdr; sr[1] <= ((a | mdr)==0); sr[7] <= a[7]; end // ora
-                        8'h0A: begin sr[0] <= a[7]; a <= {a[6:0], 1'b0}; sr[1] <= (a[6:0]==0); sr[7] <= a[6]; end // asl
-                        8'h4A: begin sr[0] <= a[0]; a <= {1'b0, a[7:1]}; sr[1] <= (a[7:1]==0); sr[7] <= 0; end // lsr
-                        8'hE8: begin x <= x + 1; sr[1] <= (x+1==0); sr[7] <= x[7]; end // inx
-                        8'hCA: begin x <= x - 1; sr[1] <= (x-1==0); sr[7] <= x[7]; end // dex
-                        8'hC8: begin y <= y + 1; sr[1] <= (y+1==0); sr[7] <= y[7]; end // iny
-                        8'h88: begin y <= y - 1; sr[1] <= (y-1==0); sr[7] <= y[7]; end // dey
-                        8'hAA: begin x <= a; sr[1] <= (a==0); sr[7] <= a[7]; end // tax
-                        8'h8A: begin a <= x; sr[1] <= (x==0); sr[7] <= x[7]; end // txa
-                        8'hA8: begin y <= a; sr[1] <= (a==0); sr[7] <= a[7]; end // tay
-                        8'h98: begin a <= y; sr[1] <= (y==0); sr[7] <= y[7]; end // tya
-                        8'h38: sr[0] <= 1; // sec
-                        8'h18: sr[0] <= 0; // clc
-                        8'h78: sr[2] <= 1; // sei
-                        8'h58: sr[2] <= 0; // cli
-                        8'h4C: pc <= ea; // jmp
-                        8'hF0: if (sr[1]) pc <= pc + {{8{ea[7]}}, ea[7:0]}; // beq
-                        8'hD0: if (!sr[1]) pc <= pc + {{8{ea[7]}}, ea[7:0]}; // bne
-                        8'hB0: if (sr[0]) pc <= pc + {{8{ea[7]}}, ea[7:0]}; // bcs
-                        8'h90: if (!sr[0]) pc <= pc + {{8{ea[7]}}, ea[7:0]}; // bcc
-                        8'h20: begin // jsr
+                        OP_AND_ABS: begin automatic logic [5:0] and_result = a & mdr; a <= and_result; sr[1] <= (and_result==0); sr[5] <= and_result[5]; end // and
+                        OP_EOR_ABS: begin automatic logic [5:0] eor_result = a ^ mdr; a <= eor_result; sr[1] <= (eor_result==0); sr[5] <= eor_result[5]; end // eor
+                        OP_ORA_ABS: begin automatic logic [5:0] ora_result = a | mdr; a <= ora_result; sr[1] <= (ora_result==0); sr[5] <= ora_result[5]; end // ora
+                        OP_ASL: begin automatic logic [5:0] asl_result = {a[4:0], 1'b0}; sr[0] <= a[5]; a <= asl_result; sr[1] <= (asl_result==0); sr[5] <= asl_result[5]; end // asl
+                        OP_LSR: begin automatic logic [5:0] lsr_result = {1'b0, a[5:1]}; sr[0] <= a[0]; a <= lsr_result; sr[1] <= (lsr_result==0); sr[5] <= lsr_result[5]; end // lsr
+                        OP_INX: begin automatic logic [5:0] inx_result = x + 1; x <= inx_result; sr[1] <= (inx_result==0); sr[5] <= inx_result[5]; end // inx
+                        OP_DEX: begin automatic logic [5:0] dex_result = x - 1; x <= dex_result; sr[1] <= (dex_result==0); sr[5] <= dex_result[5]; end // dex
+                        OP_INY: begin automatic logic [5:0] iny_result = y + 1; y <= iny_result; sr[1] <= (iny_result==0); sr[5] <= iny_result[5]; end // iny
+                        OP_DEY: begin automatic logic [5:0] dey_result = y - 1; y <= dey_result; sr[1] <= (dey_result==0); sr[5] <= dey_result[5]; end // dey
+                        OP_TAX: begin x <= a; sr[1] <= (a==0); sr[5] <= a[5]; end // tax
+                        OP_TXA: begin a <= x; sr[1] <= (x==0); sr[5] <= x[5]; end // txa
+                        OP_TAY: begin y <= a; sr[1] <= (a==0); sr[5] <= a[5]; end // tay
+                        OP_TYA: begin a <= y; sr[1] <= (y==0); sr[5] <= y[5]; end // tya
+                        OP_SEC: sr[0] <= 1; // sec
+                        OP_CLC: sr[0] <= 0; // clc
+                        OP_SEI: sr[2] <= 1; // sei
+                        OP_CLI: sr[2] <= 0; // cli
+                        OP_JMP: pc <= ea; // jmp
+                        OP_BEQ: if (sr[1]) pc <= pc + {{10{ea[5]}}, ea[5:0]}; // beq
+                        OP_BNE: if (!sr[1]) pc <= pc + {{10{ea[5]}}, ea[5:0]}; // bne
+                        OP_BCS: if (sr[0]) pc <= pc + {{10{ea[5]}}, ea[5:0]}; // bcs
+                        OP_BCC: if (!sr[0]) pc <= pc + {{10{ea[5]}}, ea[5:0]}; // bcc
+                        OP_JSR: begin // jsr
                             state <= STATE_PUSH;
-                            t1 <= pc[15:8];
+                            t1 <= pc[15:10];
                         end
-                        8'h60: begin // rts
+                        OP_RTS: begin // rts
                             state <= STATE_POP;
                             t1 <= 0;
                         end
-                        8'h48: begin // pha
+                        OP_PHA: begin // pha
                             state <= STATE_PUSH;
                             t1 <= a;
                         end
-                        8'h68: begin // pla
+                        OP_PLA: begin // pla
                             state <= STATE_POP;
                         end
                         default: ;
                     endcase
                     
-                    if (ir != 8'h20 && ir != 8'h60 && ir != 8'h48 && ir != 8'h68) begin
+                    if (ir != OP_JSR && ir != OP_RTS && ir != OP_PHA && ir != OP_PLA) begin
                         state <= (!run_enable) ? STATE_HALTED : STATE_FETCH;
                     end
                 end
@@ -285,16 +332,16 @@ module ocpu_core (
                     if (!mem_req) begin
                         mem_req <= 1;
                         mem_rw <= 1;
-                        mem_addr <= {8'h01, sp};
+                        mem_addr <= {10'h001, sp};
                         mem_wdata <= t1;
                     end
                     if (mem_ready) begin
                         sp <= sp - 1;
                         mem_req <= 0;
                         mem_rw <= 0;
-                        if (ir == 8'h20 && t1 == pc[15:8]) begin
-                            t1 <= pc[7:0]; // jsr pushes pc_l on next cycle
-                        end else if (ir == 8'h20) begin
+                        if (ir == OP_JSR && t1 == pc[15:10]) begin
+                            t1 <= pc[9:4]; // jsr pushes pc_l on next cycle
+                        end else if (ir == OP_JSR) begin
                             pc <= ea;
                             state <= STATE_FETCH;
                         end else begin
@@ -307,18 +354,18 @@ module ocpu_core (
                     if (!mem_req) begin
                         mem_req <= 1;
                         mem_rw <= 0;
-                        mem_addr <= {8'h01, sp + 8'd1};
+                        mem_addr <= {10'h001, sp + 6'd1};
                     end
                     if (mem_ready) begin
                         sp <= sp + 1;
                         mem_req <= 0;
-                        if (ir == 8'h68) begin
+                        if (ir == OP_PLA) begin
                             a <= mem_rdata;
                             state <= STATE_FETCH;
-                        end else if (ir == 8'h60 && t1 == 0) begin
+                        end else if (ir == OP_RTS && t1 == 0) begin
                             t1 <= mem_rdata; // popped pc_l
                             state <= STATE_POP;
-                        end else if (ir == 8'h60) begin
+                        end else if (ir == OP_RTS) begin
                             pc <= {mem_rdata, t1} + 1; // popped pc_h, return address + 1
                             state <= STATE_FETCH;
                         end
