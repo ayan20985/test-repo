@@ -28,7 +28,7 @@ the instruction set of the minimized MIPS-adjacent cpu is as follows:
 1111 pop          ; pop from stack to accumulator
 
 ## minimized 6502 OCPU instruction set (CISC)
-this 8-bit opcode instruction set is heavily paired-down but explicitly mapped to the core 6502 architecture. by including the x and y registers in hardware, we natively support the 6502's indexed addressing modes, which are heavily used by C compilers for arrays and pointers.
+this 6-bit opcode instruction set is heavily paired-down but explicitly mapped to the core 6502 architecture. by including the x and y registers in hardware, we natively support the 6502's indexed addressing modes, which are heavily used by C compilers for arrays and pointers.
 
 memory & immediate operations:
 - `lda #imm` / `ldx #imm` / `ldy #imm`  ; load immediate (a/x/y = imm)
@@ -74,8 +74,8 @@ the ocpu features a single-core architectural approach utilizing a multi-level f
 - accumulator-based logic: to severely constrain the flip-flop footprint required per core, the datapath relies purely on an accumulator and strictly defined index registers (x, y) rather than a generalized register file.
 
 ## features
-- the programmer-visible registers include an 8-bit accumulator (a), index registers (x, y), and an 8-bit stack pointer (sp).
-- the internal datapath consists of a program counter (pc), instruction register (ir), and memory data register (mdr). note that the pc is 16-bit, allowing standard 64kb addressability natively.
+- the programmer-visible registers include a 6-bit accumulator (a), index registers (x, y), and a 6-bit stack pointer (sp).
+- the internal datapath consists of a 16-bit program counter (pc) plus 6-bit instruction register (ir) and memory data register (mdr).
 - the peripheral registers include interrupt vector and enable registers. to securely access mbits of external memory beyond the standard 64kb address space without complicating external peripheral logic, a zero-page memory-mapped i/o (mmio) banking register is used. writing to address `0xff` (e.g., `sta $ff`) inherently flips the upper memory lines sent from the cpu out to the external serial memory, maintaining hardware simplicity and 100% isa compatibility with standard 6502 compilers.
 - the controllable target pll behaves independently so the cpu clock speed can be dynamically governed externally to control power draw and test frequency bounds, the pll will be muxed with the external clock the tt chip so that we can avoid it if need be.
 - we will also add a very small piece of cache that we can read to see how much overclocking we have done as our io is limited to 50mhz maybe higher if we don't use tt pcb. we can then query this cache at 50mhz and see what the overclocked rate is.

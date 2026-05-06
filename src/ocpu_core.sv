@@ -129,17 +129,18 @@ module ocpu_core (
                     if (run_enable) state <= STATE_FETCH;
                 end
                 
+                // never assert mem_req while mem_ready is still high from the prior
+                // transfer (arb wait hold); otherwise we complete instantly on stale rdata.
                 STATE_FETCH: begin
-                    if (!mem_req) begin
-                        mem_req <= 1;
-                        mem_rw <= 0;
-                        mem_addr <= pc;
-                    end
-                    if (mem_ready) begin
+                    if (mem_ready && mem_req) begin
                         ir <= mem_rdata;
                         mem_req <= 0;
                         pc <= pc + 1;
                         state <= STATE_DECODE;
+                    end else if (!mem_req && !mem_ready) begin
+                        mem_req <= 1;
+                        mem_rw <= 0;
+                        mem_addr <= pc;
                     end
                 end
                 
@@ -158,12 +159,7 @@ module ocpu_core (
                 end
 
                 STATE_OP1: begin
-                    if (!mem_req) begin
-                        mem_req <= 1;
-                        mem_rw <= 0;
-                        mem_addr <= pc;
-                    end
-                    if (mem_ready) begin
+                    if (mem_ready && mem_req) begin
                         ea <= {10'h00, mem_rdata};
                         mem_req <= 0;
                         pc <= pc + 1;
@@ -175,16 +171,15 @@ module ocpu_core (
                         end else begin
                             state <= STATE_OP2;
                         end
-                    end
-                end
-
-                STATE_OP2: begin
-                    if (!mem_req) begin
+                    end else if (!mem_req && !mem_ready) begin
                         mem_req <= 1;
                         mem_rw <= 0;
                         mem_addr <= pc;
                     end
-                    if (mem_ready) begin
+                end
+
+                STATE_OP2: begin
+                    if (mem_ready && mem_req) begin
                         mem_req <= 0;
                         pc <= pc + 1;
                         if (ir == OP_LDA_ABS_X || ir == OP_STA_ABS_X) begin
@@ -202,53 +197,58 @@ module ocpu_core (
                             memAddr <= (ir == OP_LDA_ABS_X || ir == OP_STA_ABS_X) ? ({mem_rdata, ea[5:0]} + x) : ({mem_rdata, ea[5:0]});
                             state <= STATE_MEM_READ;
                         end
+                    end else if (!mem_req && !mem_ready) begin
+                        mem_req <= 1;
+                        mem_rw <= 0;
+                        mem_addr <= pc;
                     end
                 end
 
                 STATE_IND_Y1: begin
-                    if (!mem_req) begin
-                        mem_req <= 1;
-                        mem_rw <= 0;
-                        mem_addr <= {8'h00, ea[7:0]};
-                    end
-                    if (mem_ready) begin
+                    if (mem_ready && mem_req) begin
                         mem_req <= 0;
                         t1 <= mem_rdata;
-                        ea[7:0] <= ea[7:0] + 1;
+                        ea[5:0] <= ea[5:0] + 1;
                         state <= STATE_IND_Y2;
+                    end else if (!mem_req && !mem_ready) begin
+                        mem_req <= 1;
+                        mem_rw <= 0;
+                        mem_addr <= {10'h00, ea[5:0]};
                     end
                 end
 
                 STATE_IND_Y2: begin
-                    if (!mem_req) begin
-                        mem_req <= 1;
-                        mem_rw <= 0;
-                        mem_addr <= {8'h00, ea[7:0]};
-                    end
-                    if (mem_ready) begin
+                    if (mem_ready && mem_req) begin
                         mem_req <= 0;
                         ea <= {mem_rdata, t1} + y;
                         memAddr <= {mem_rdata, t1} + y;
                         if (ir == OP_STA_IND_Y) state <= STATE_MEM_WRITE;
                         else state <= STATE_MEM_READ;
+                    end else if (!mem_req && !mem_ready) begin
+                        mem_req <= 1;
+                        mem_rw <= 0;
+                        mem_addr <= {10'h00, ea[5:0]};
                     end
                 end
 
                 STATE_MEM_READ: begin
-                    if (!mem_req) begin
+                    if (mem_ready && mem_req) begin
+                        mem_req <= 0;
+                        mdr <= mem_rdata;
+                        state <= STATE_EXECUTE;
+                    end else if (!mem_req && !mem_ready) begin
                         mem_req <= 1;
                         mem_rw <= 0;
                         mem_addr <= memAddr;
                     end
-                    if (mem_ready) begin
-                        mem_req <= 0;
-                        mdr <= mem_rdata;
-                        state <= STATE_EXECUTE;
-                    end
                 end
                 
                 STATE_MEM_WRITE: begin
-                    if (!mem_req) begin
+                    if (mem_ready && mem_req) begin
+                        mem_req <= 0;
+                        mem_rw <= 0;
+                        state <= STATE_FETCH;
+                    end else if (!mem_req && !mem_ready) begin
                         mem_req <= 1;
                         mem_rw <= 1;
                         mem_addr <= memAddr;
@@ -256,21 +256,16 @@ module ocpu_core (
                         else if (ir == OP_STX_ABS) mem_wdata <= x;
                         else if (ir == OP_STY_ABS) mem_wdata <= y;
                     end
-                    if (mem_ready) begin
-                        mem_req <= 0;
-                        mem_rw <= 0;
-                        state <= STATE_FETCH;
-                    end
                 end
 
                 STATE_EXECUTE: begin
                     case (ir)
-                        OP_LDA_IMM: begin a <= ea[5:0]; sr[1] <= (ea[5:0]==0); sr[5] <= ea[5]; end // lda #
+                        OP_LDA_IMM: begin a <= ea[5:0]; sr[1] <= (ea[5:0]==0); sr[5] <= ea[5]; end                      // lda #
                         OP_LDA_ABS, OP_LDA_ABS_X, OP_LDA_IND_Y: begin a <= mdr; sr[1] <= (mdr==0); sr[5] <= mdr[5]; end // lda abs / abs,x / ind,y
-                        OP_LDX_IMM: begin x <= ea[5:0]; sr[1] <= (ea[5:0]==0); sr[5] <= ea[5]; end // ldx #
-                        OP_LDX_ABS: begin x <= mdr; sr[1] <= (mdr==0); sr[5] <= mdr[5]; end // ldx abs
-                        OP_LDY_IMM: begin y <= ea[5:0]; sr[1] <= (ea[5:0]==0); sr[5] <= ea[5]; end // ldy #
-                        OP_LDY_ABS: begin y <= mdr; sr[1] <= (mdr==0); sr[5] <= mdr[5]; end // ldy abs
+                        OP_LDX_IMM: begin x <= ea[5:0]; sr[1] <= (ea[5:0]==0); sr[5] <= ea[5]; end                      // ldx #
+                        OP_LDX_ABS: begin x <= mdr; sr[1] <= (mdr==0); sr[5] <= mdr[5]; end                             // ldx abs
+                        OP_LDY_IMM: begin y <= ea[5:0]; sr[1] <= (ea[5:0]==0); sr[5] <= ea[5]; end                      // ldy #
+                        OP_LDY_ABS: begin y <= mdr; sr[1] <= (mdr==0); sr[5] <= mdr[5]; end                                 // ldy abs
                         OP_ADC_ABS: begin // adc
                             automatic logic [6:0] adc_result = a + mdr + sr[0];
                             {sr[0], a} <= adc_result;
@@ -300,11 +295,11 @@ module ocpu_core (
                         OP_CLC: sr[0] <= 0; // clc
                         OP_SEI: sr[2] <= 1; // sei
                         OP_CLI: sr[2] <= 0; // cli
-                        OP_JMP: pc <= ea; // jmp
-                        OP_BEQ: if (sr[1]) pc <= pc + {{10{ea[5]}}, ea[5:0]}; // beq
-                        OP_BNE: if (!sr[1]) pc <= pc + {{10{ea[5]}}, ea[5:0]}; // bne
-                        OP_BCS: if (sr[0]) pc <= pc + {{10{ea[5]}}, ea[5:0]}; // bcs
-                        OP_BCC: if (!sr[0]) pc <= pc + {{10{ea[5]}}, ea[5:0]}; // bcc
+                        OP_JMP: pc <= ea;   // jmp
+                        OP_BEQ: if (sr[1]) pc <= pc + {{10{ea[5]}}, ea[5:0]};   // beq
+                        OP_BNE: if (!sr[1]) pc <= pc + {{10{ea[5]}}, ea[5:0]};  // bne
+                        OP_BCS: if (sr[0]) pc <= pc + {{10{ea[5]}}, ea[5:0]};   // bcs
+                        OP_BCC: if (!sr[0]) pc <= pc + {{10{ea[5]}}, ea[5:0]};  // bcc
                         OP_JSR: begin // jsr
                             state <= STATE_PUSH;
                             t1 <= pc[15:10];
@@ -329,13 +324,7 @@ module ocpu_core (
                 end
 
                 STATE_PUSH: begin
-                    if (!mem_req) begin
-                        mem_req <= 1;
-                        mem_rw <= 1;
-                        mem_addr <= {10'h001, sp};
-                        mem_wdata <= t1;
-                    end
-                    if (mem_ready) begin
+                    if (mem_ready && mem_req) begin
                         sp <= sp - 1;
                         mem_req <= 0;
                         mem_rw <= 0;
@@ -347,16 +336,16 @@ module ocpu_core (
                         end else begin
                             state <= STATE_FETCH;
                         end
+                    end else if (!mem_req && !mem_ready) begin
+                        mem_req <= 1;
+                        mem_rw <= 1;
+                        mem_addr <= {10'h001, sp};
+                        mem_wdata <= t1;
                     end
                 end
                 
                 STATE_POP: begin
-                    if (!mem_req) begin
-                        mem_req <= 1;
-                        mem_rw <= 0;
-                        mem_addr <= {10'h001, sp + 6'd1};
-                    end
-                    if (mem_ready) begin
+                    if (mem_ready && mem_req) begin
                         sp <= sp + 1;
                         mem_req <= 0;
                         if (ir == OP_PLA) begin
@@ -369,6 +358,10 @@ module ocpu_core (
                             pc <= {mem_rdata, t1} + 1; // popped pc_h, return address + 1
                             state <= STATE_FETCH;
                         end
+                    end else if (!mem_req && !mem_ready) begin
+                        mem_req <= 1;
+                        mem_rw <= 0;
+                        mem_addr <= {10'h001, sp + 6'd1};
                     end
                 end
 

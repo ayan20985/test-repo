@@ -74,6 +74,12 @@ def main():
             cmd += ["-a", load_addr]
         if stop_pc is not None:
             cmd += ["-p", stop_pc]
+        if expected.get("steps", "0") != "0":
+            steps_path = ocpu_path.with_suffix(".outsteps")
+            cmd += ["-s", str(steps_path)]
+        if expected.get("buslog", "0") != "0":
+            buslog_path = ocpu_path.with_suffix(".buslog")
+            cmd += ["-b", str(buslog_path)]
 
         rc = run_cmd(cmd)
         if rc != 0:
@@ -83,7 +89,7 @@ def main():
 
         actual = read_kv(out_path)
         for key, value in expected.items():
-            if key in {"max_cycles", "load_addr", "stop_pc"}:
+            if key in {"max_cycles", "load_addr", "stop_pc", "steps", "buslog"}:
                 continue
             if key not in actual:
                 print(f"missing key {key} in {out_path.name}")

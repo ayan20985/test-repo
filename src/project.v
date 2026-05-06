@@ -117,11 +117,17 @@ module tt_um_ocpu (
 
     localparam ARB_IDLE    = 2'd0,
                ARB_C0_REQ  = 2'd1,
-               ARB_C0_RESP = 2'd2;
+               ARB_C0_RESP = 2'd2,
+               ARB_C0_WAIT = 2'd3;
     
     reg [1:0] arb_state;
 
     // memory bus arbitration (single core)
+    // note: c0_mem_req is registered inside the core, so when the core sees
+    // mem_ready=1 and schedules mem_req<=0, the deassert only takes effect
+    // one clock later. arb_c0_wait holds off new transactions until that
+    // deassert is observed, otherwise the arb would re-fire a redundant
+    // request for the same address and the core would latch stale data.
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             master_state <= MASTER_STATE_INIT;
@@ -140,15 +146,19 @@ module tt_um_ocpu (
                         if (c0_mem_rw && c0_mem_addr == 16'h00FF) begin
                             mmio_bank <= c0_mem_wdata;
                             c0_mem_ready <= 1;
+                            arb_state <= ARB_C0_WAIT;
                         end else if (c0_mem_rw && c0_mem_addr == 16'h00FE) begin
                             oc_cache <= c0_mem_wdata;
                             c0_mem_ready <= 1;
+                            arb_state <= ARB_C0_WAIT;
                         end else if (!c0_mem_rw && c0_mem_addr == 16'h00FE) begin
                             c0_mem_rdata <= oc_cache;
                             c0_mem_ready <= 1;
+                            arb_state <= ARB_C0_WAIT;
                         end else if (c0_mem_rw && c0_mem_addr == 16'h00FC) begin
                             // former simd entry mmio: single core completes the cycle only
                             c0_mem_ready <= 1;
+                            arb_state <= ARB_C0_WAIT;
                         end else begin
                             spi_req <= 1;
                             spi_rw <= c0_mem_rw;
@@ -169,7 +179,16 @@ module tt_um_ocpu (
 
                 ARB_C0_RESP: begin
                     c0_mem_ready <= 1;
-                    arb_state <= ARB_IDLE;
+                    arb_state <= ARB_C0_WAIT;
+                end
+
+                ARB_C0_WAIT: begin
+                    // hold here until the core has dropped its request line,
+                    // ensuring the next ARB_IDLE entry only sees genuine new
+                    // memory requests and not the trailing edge of the prior one.
+                    if (!c0_mem_req) begin
+                        arb_state <= ARB_IDLE;
+                    end
                 end
 
                 default: arb_state <= ARB_IDLE;

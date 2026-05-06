@@ -27,6 +27,7 @@ module spi_memory (
     reg [6:0]  bit_count;     // counts up to 40 logic steps (32 bits * 2 cycles for cmd/addr + 8 bits * 2 cycles for data)
     reg [31:0] shift_out;
     reg [7:0]  shift_in;
+    reg        prev_req;      // for rising-edge detect on req so a held req doesn't auto-restart a transaction
     
     assign mosi = shift_out[31];
     
@@ -42,14 +43,19 @@ module spi_memory (
             bit_count <= 0;
             shift_out <= 0;
             shift_in <= 0;
+            prev_req <= 0;
         end else begin
+            // sample req every cycle so the idle clause can detect a fresh request
+            // (req goes 0->1) rather than re-firing whenever the line is still high
+            // from the just-completed transaction.
+            prev_req <= req;
             case (state)
                 STATE_IDLE: begin
                     sck <= 0;
                     cs_n <= 1;
                     ready <= 0;
                     bit_count <= 0;
-                    if (req) begin
+                    if (req && !prev_req) begin
                         cs_n <= 0;
                         // spi read cmd = 0x03, write cmd = 0x02.
                         shift_out <= { (is_write_cmd ? 8'h02 : 8'h03), addr };
