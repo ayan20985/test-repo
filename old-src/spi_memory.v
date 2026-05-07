@@ -1,99 +1,137 @@
 `default_nettype none
 
+// SPI slave memory interface.
+// Acts as a responder to an external SPI master.
+// Protocol: master sends [8-bit cmd | 24-bit addr | 8-bit data], slave responds with data on reads.
+// Read  cmd = 0x03, Write cmd = 0x02.
+
 module spi_memory (
-    input  wire        clk,
+    input  wire        clk,        // local clock (independent from SPI)
     input  wire        rst_n,
-    
-    input  wire        req,
-    input  wire        rw,
-    input  wire [23:0] addr,
-    input  wire [5:0]  wdata,
-    output reg         ready,
-    output reg  [5:0]  rdata,
-    
-    output reg         sck,
-    output reg         cs_n,
-    output wire        mosi,
-    input  wire        miso
+
+    // internal memory registers (read/written by SPI slave protocol)
+    output reg  [23:0] mem_addr,   // address from last SPI transaction
+    output reg  [7:0]  mem_wdata,  // write data from last SPI transaction
+    input  wire [7:0]  mem_rdata,  // data to return on next SPI read
+    output reg         mem_write,  // pulse: SPI write command completed
+    output reg         mem_read,   // pulse: SPI read command completed
+
+    // physical SPI slave pins (controlled by external master)
+    input  wire        sck,        // serial clock (from master)
+    input  wire        cs_n,       // chip select (from master)
+    input  wire        mosi,       // master out, slave in (from master)
+    output wire        miso        // master in, slave out (to master)
 );
 
-    localparam STATE_IDLE      = 0,
-               STATE_TRANSFER  = 1,
-               STATE_DONE      = 2;
+    // synchronize external SPI signals to local clock
+    reg sck_r1, sck_r2;
+    reg cs_r1, cs_r2;
+    reg mosi_r1, mosi_r2;
 
-    reg [1:0]  state;
-    reg [6:0]  bit_count;
-    reg [31:0] shift_out;
-    reg [7:0]  shift_in;
-    reg        prev_req;
-    
-    assign mosi = shift_out[31];
-    
-    wire is_write_cmd = rw;
-    
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= STATE_IDLE;
-            sck <= 0;
-            cs_n <= 1;
-            ready <= 0;
-            rdata <= 0;
-            bit_count <= 0;
-            shift_out <= 0;
-            shift_in <= 0;
-            prev_req <= 0;
+            sck_r1 <= 0;
+            sck_r2 <= 0;
+            cs_r1 <= 1;
+            cs_r2 <= 1;
+            mosi_r1 <= 0;
+            mosi_r2 <= 0;
         end else begin
-            prev_req <= req;
-            case (state)
-                STATE_IDLE: begin
-                    sck <= 0;
-                    cs_n <= 1;
-                    ready <= 0;
-                    bit_count <= 0;
-                    if (req && !prev_req) begin
-                        cs_n <= 0;
-                        shift_out <= { (is_write_cmd ? 8'h02 : 8'h03), addr };
-                        state <= STATE_TRANSFER;
-                    end
-                end
-                
-                STATE_TRANSFER: begin
-                    if (sck == 0) begin
-                        sck <= 1;
-                        if (bit_count >= 64 && !is_write_cmd) begin
-                            shift_in <= {shift_in[6:0], miso};
+            sck_r1  <= sck;
+            sck_r2  <= sck_r1;
+            cs_r1   <= cs_n;
+            cs_r2   <= cs_r1;
+            mosi_r1 <= mosi;
+            mosi_r2 <= mosi_r1;
+        end
+    end
+
+    wire sck_sync = sck_r2;
+    wire cs_sync = cs_r2;
+    wire mosi_sync = mosi_r2;
+
+    // detect SCK rising edge
+    reg sck_prev;
+    wire sck_rising = sck_sync && !sck_prev;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            sck_prev <= 0;
+        else
+            sck_prev <= sck_sync;
+    end
+
+    // shift register for incoming SPI data (40 bits: 8 cmd + 24 addr + 8 data)
+    reg [39:0] shift_in;
+    reg [6:0]  bit_count;
+    reg [7:0]  shift_out;
+    reg [7:0]  read_data;
+    reg [7:0]  cmd_byte;
+    wire [23:0] addr_field = shift_in[31:8];
+    wire [7:0]  data_field = shift_in[7:0];
+
+    assign miso = shift_out[7];
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            shift_in    <= 40'h0;
+            bit_count   <= 0;
+            shift_out   <= 8'h0;
+            read_data   <= 8'h0;
+            mem_addr    <= 24'h0;
+            mem_wdata   <= 8'h0;
+            mem_write   <= 0;
+            mem_read    <= 0;
+            cmd_byte    <= 8'h0;
+        end else begin
+            mem_write <= 0;
+            mem_read  <= 0;
+
+            if (cs_sync) begin
+                // chip select inactive: reset
+                bit_count <= 0;
+                shift_in  <= 40'h0;
+                shift_out <= 8'h0;
+            end else begin
+                // chip select active
+                if (sck_rising) begin
+                    // shift in MOSI on SCK rising edge
+                    shift_in <= {shift_in[38:0], mosi_sync};
+
+                    if (bit_count < 40) begin
+                        bit_count <= bit_count + 1;
+
+                        // after 8 bits, latch command
+                        if (bit_count == 7)
+                            cmd_byte <= {shift_in[38:0], mosi_sync}[39:32];
+
+                        // after 32 bits, we have cmd+addr; prepare response
+                        if (bit_count == 31) begin
+                            mem_addr <= {shift_in[38:0], mosi_sync}[31:8];
                         end
-                    end else begin
-                        sck <= 0;
-                        if (bit_count < 62) begin
-                            shift_out <= {shift_out[30:0], 1'b0};
-                        end else if (bit_count == 62) begin
-                            if (is_write_cmd)
-                                shift_out <= {2'b00, wdata, 24'b0};
-                            else
-                                shift_out <= {shift_out[30:0], 1'b0};
-                        end else if (bit_count >= 64 && is_write_cmd) begin
-                            shift_out <= {shift_out[30:0], 1'b0};
-                        end
-                        bit_count <= bit_count + 2;
-                        
-                        if (bit_count >= 78) begin
-                            state <= STATE_DONE;
+
+                        // after 40 bits, transaction complete
+                        if (bit_count == 39) begin
+                            mem_wdata <= {shift_in[38:0], mosi_sync}[7:0];
+                            if (cmd_byte == 8'h02) begin
+                                // write command
+                                mem_write <= 1;
+                            end else if (cmd_byte == 8'h03) begin
+                                // read command
+                                mem_read <= 1;
+                                read_data <= mem_rdata;
+                            end
+                            bit_count <= 0;
                         end
                     end
+
+                    // drive MISO during data phase (bits 32-39)
+                    if (bit_count >= 32 && bit_count < 40)
+                        shift_out <= {shift_out[6:0], 1'b0};
+                    else if (bit_count == 31)
+                        shift_out <= read_data;
                 end
-                
-                STATE_DONE: begin
-                    cs_n <= 1;
-                    ready <= 1;
-                    if (!is_write_cmd) begin
-                        rdata <= shift_in[5:0];
-                    end
-                    state <= STATE_IDLE;
-                end
-                
-                default: state <= STATE_IDLE;
-            endcase
+            end
         end
     end
 

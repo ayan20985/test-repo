@@ -18,9 +18,8 @@ project:
   source_files:
     - "iram_regfile.v"
     - "ocpu_core.v"
-    - "page_controller.v"
     - "project.v"
-    - "spi_memory.v"
+    - "ospi_memory.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 pinout:

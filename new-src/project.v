@@ -1,22 +1,18 @@
 `default_nettype none
 
-// OCPU top-level (Tiny Tapeout wrapper)
+// OCPU top-level (Tiny Tapeout wrapper) - SPI slave mode
 //
-// Pin map:
-//   ui_in[0]     = SPI MISO
+// Pin map (SPI slave mode, external master controls):
+//   ui_in[0]     = SPI MISO (output from this design)
 //   ui_in[7:1]   = unused
-//   uo_out[0]    = SPI SCK
-//   uo_out[1]    = SPI CS_N
-//   uo_out[2]    = SPI MOSI
+//   uo_out[0]    = SPI SCK (input, external master drives)
+//   uo_out[1]    = SPI CS_N (input, external master drives)
+//   uo_out[2]    = SPI MOSI (input, external master drives)
 //   uo_out[7:3]  = unused
 //   uio_*        = unused
 //
-// SPI bus arbitration:
-//   The single spi_memory instance is shared between:
-//     (a) page_controller for instruction page load/writeback (priority, holds cpu halted)
-//     (b) ocpu_core data bus for data reads/writes during normal execution
-//   page_controller gets the bus whenever page_loading is asserted.
-//   cpu data bus gets the bus when page_loading is deasserted and the cpu has a pending req.
+// An external SPI master controls the SPI protocol and reads/writes OCPU memory
+// via the slave interface. The OCPU can run with local instruction page 0.
 
 module tt_um_ocpu (
     input  wire [7:0] ui_in,
@@ -41,20 +37,21 @@ module tt_um_ocpu (
 );
 
     // -------------------------------------------------------------------------
-    // SPI pins
+    // SPI slave pins
+    // slave mode: SCK, CS_N, MOSI are inputs from external master (via uio)
+    // MISO is output to external master (via uo_out[0])
     // -------------------------------------------------------------------------
-    wire spi_miso = ui_in[0];
-    wire spi_sck, spi_cs_n, spi_mosi;
+    wire spi_sck_i   = uio_in[0];   // external master drives SCK
+    wire spi_cs_n_i  = uio_in[1];   // external master drives CS_N
+    wire spi_mosi_i  = uio_in[2];   // external master drives MOSI
+    wire spi_miso_o;                 // we drive MISO back to master
 
-    assign uo_out[0] = spi_sck;
-    assign uo_out[1] = spi_cs_n;
-    assign uo_out[2] = spi_mosi;
-    assign uo_out[7:3] = 5'b0;
+    assign uo_out[0] = spi_miso_o;   // MISO output
+    assign uo_out[7:1] = 7'b0;       // other outputs unused
 
+    // uio tri-state: SCK, CS_N, MOSI are inputs, so we don't drive them
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
-
-    wire _unused = &{ena, ui_in[7:1], uio_in};
 
     // -------------------------------------------------------------------------
     // iRAM regfile wires
@@ -68,16 +65,14 @@ module tt_um_ocpu (
     wire [3:0]  cpu_iram_wr_slot;
     wire [15:0] cpu_iram_wr_data;
 
-    // page_controller write port
-    wire        pg_iram_wr_en;
-    wire [3:0]  pg_iram_wr_slot;
-    wire [15:0] pg_iram_wr_data;
-
-    // page_controller read port (writeback)
-    wire [3:0]  pg_iram_rd_slot;
+    // page_controller ports (no longer used, tied off)
+    wire        pg_iram_wr_en = 1'b0;
+    wire [3:0]  pg_iram_wr_slot = 4'h0;
+    wire [15:0] pg_iram_wr_data = 16'h0;
+    wire [3:0]  pg_iram_rd_slot = 4'h0;
     wire [15:0] pg_iram_rd_data;
 
-    // dirty bits
+    // dirty bits (not used in slave mode)
     wire [15:0] dirty_bits;
 
     iram_regfile iram (
@@ -102,7 +97,7 @@ module tt_um_ocpu (
     );
 
     // -------------------------------------------------------------------------
-    // Page handshake wires
+    // Page handshake (minimized for slave mode)
     // -------------------------------------------------------------------------
     wire        page_req;
     wire [7:0]  page_next;
@@ -111,7 +106,7 @@ module tt_um_ocpu (
     wire        page_done;
 
     // -------------------------------------------------------------------------
-    // CPU data memory bus wires
+    // CPU data memory bus (not connected in slave mode)
     // -------------------------------------------------------------------------
     wire        cpu_mem_req;
     wire        cpu_mem_rw;
@@ -121,20 +116,30 @@ module tt_um_ocpu (
     reg  [7:0]  cpu_mem_rdata;
 
     // -------------------------------------------------------------------------
-    // SPI controller wires (muxed between page_ctrl and cpu)
+    // SPI slave interface (external master controls clock, CS, MOSI)
     // -------------------------------------------------------------------------
-    reg         spi_req;
-    reg         spi_rw;
-    reg  [23:0] spi_addr;
-    reg  [7:0]  spi_wdata;
-    wire        spi_ready;
-    wire [7:0]  spi_rdata;
+    wire [23:0] spi_mem_addr;
+    wire [7:0]  spi_mem_wdata;
+    wire        spi_mem_write;  // pulse when SPI write command completes
+    wire        spi_mem_read;   // pulse when SPI read command completes
 
-    // page_controller's SPI request wires
-    wire        pg_spi_req;
-    wire        pg_spi_rw;
-    wire [23:0] pg_spi_addr;
-    wire [7:0]  pg_spi_wdata;
+    spi_memory spi_slave (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        // slave responds to external master commands
+        .sck        (spi_sck_i),    // external master drives this (via uio_in[0])
+        .cs_n       (spi_cs_n_i),   // external master drives this (via uio_in[1])
+        .mosi       (spi_mosi_i),   // external master drives this (via uio_in[2])
+        .miso       (spi_miso_o),   // slave drives this to master (via uo_out[0])
+        // internal memory interface
+        .mem_addr   (spi_mem_addr),
+        .mem_wdata  (spi_mem_wdata),
+        .mem_rdata  (8'h00),        // read data (fixed for now, external master provides)
+        .mem_write  (spi_mem_write),
+        .mem_read   (spi_mem_read)
+    );
+
+    wire _unused = &{ena, ui_in};
 
     // -------------------------------------------------------------------------
     // ocpu_core
@@ -182,119 +187,33 @@ module tt_um_ocpu (
 `endif
 
     // -------------------------------------------------------------------------
-    // page_controller
+    // page_controller disabled in slave-only mode
+    // external SPI master must handle instruction page load via SPI slave
     // -------------------------------------------------------------------------
-    page_controller pgctrl (
-        .clk          (clk),
-        .rst_n        (rst_n),
-        // handshake
-        .page_req     (page_req),
-        .page_next    (page_next),
-        .page_current (page_reg),
-        .page_loading (page_loading),
-        .page_done    (page_done),
-        // dirty bits
-        .dirty_bits   (dirty_bits),
-        // iRAM read (writeback)
-        .iram_rd_slot (pg_iram_rd_slot),
-        .iram_rd_data (pg_iram_rd_data),
-        // iRAM write (load)
-        .iram_wr_en   (pg_iram_wr_en),
-        .iram_wr_slot (pg_iram_wr_slot),
-        .iram_wr_data (pg_iram_wr_data),
-        // SPI bus (raw wires, muxed below)
-        .spi_req      (pg_spi_req),
-        .spi_rw       (pg_spi_rw),
-        .spi_addr     (pg_spi_addr),
-        .spi_wdata    (pg_spi_wdata),
-        .spi_ready    (spi_ready),
-        .spi_rdata    (spi_rdata)
-    );
+    // for now, tie off page handshake signals
+    assign page_loading = 1'b0;
+    assign page_done    = 1'b0;
 
-    // -------------------------------------------------------------------------
-    // SPI arbitration
-    // page_controller has absolute priority while page_loading.
-    // cpu data bus gets the bus otherwise (same handshake pattern as old arb).
-    // -------------------------------------------------------------------------
-    localparam ARB_IDLE    = 2'd0,
-               ARB_CPU_REQ = 2'd1,
-               ARB_CPU_RSP = 2'd2,
-               ARB_CPU_WAIT= 2'd3;
-
-    reg [1:0] arb_state;
+    // keep page_reg at page 0 for now (cpu can still run with page 0 instructions)
+    // external master can later send SPI commands to load different pages via slave
+    reg [7:0] page_reg_local;
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            arb_state     <= ARB_IDLE;
-            cpu_mem_ready <= 0;
-            cpu_mem_rdata <= 0;
-            spi_req       <= 0;
-            spi_rw        <= 0;
-            spi_addr      <= 24'h0;
-            spi_wdata     <= 8'h0;
-        end else begin
-            cpu_mem_ready <= 0; // default deassert
-
-            // Page controller owns the SPI bus when busy
-            if (page_loading) begin
-                spi_req   <= pg_spi_req;
-                spi_rw    <= pg_spi_rw;
-                spi_addr  <= pg_spi_addr;
-                spi_wdata <= pg_spi_wdata;
-                // cpu is halted during page load no cpu responses needed
-                arb_state <= ARB_IDLE;
-            end else begin
-                case (arb_state)
-                    ARB_IDLE: begin
-                        if (cpu_mem_req) begin
-                            spi_req   <= 1;
-                            spi_rw    <= cpu_mem_rw;
-                            spi_addr  <= {8'h00, cpu_mem_addr}; // data addr (16-bit, no bank)
-                            spi_wdata <= cpu_mem_wdata;
-                            arb_state <= ARB_CPU_REQ;
-                        end
-                    end
-
-                    ARB_CPU_REQ: begin
-                        if (spi_ready && spi_req) begin
-                            spi_req       <= 0;
-                            cpu_mem_rdata <= spi_rdata;
-                            arb_state     <= ARB_CPU_RSP;
-                        end
-                    end
-
-                    ARB_CPU_RSP: begin
-                        cpu_mem_ready <= 1;
-                        arb_state     <= ARB_CPU_WAIT;
-                    end
-
-                    ARB_CPU_WAIT: begin
-                        if (!cpu_mem_req)
-                            arb_state <= ARB_IDLE;
-                    end
-
-                    default: arb_state <= ARB_IDLE;
-                endcase
-            end
-        end
+        if (!rst_n)
+            page_reg_local <= 8'h00;
+        else if (page_req)
+            page_reg_local <= page_next;  // latch requested page (ignored for now)
     end
 
+    assign page_reg = page_reg_local;
+
     // -------------------------------------------------------------------------
-    // spi_memory instance
+    // connect cpu memory bus (not connected to SPI in slave mode)
+    // external master communicates via SPI slave, not through cpu mem bus
     // -------------------------------------------------------------------------
-    spi_memory spi_ctrl (
-        .clk    (clk),
-        .rst_n  (rst_n),
-        .req    (spi_req),
-        .rw     (spi_rw),
-        .addr   (spi_addr),
-        .wdata  (spi_wdata),
-        .ready  (spi_ready),
-        .rdata  (spi_rdata),
-        .sck    (spi_sck),
-        .cs_n   (spi_cs_n),
-        .mosi   (spi_mosi),
-        .miso   (spi_miso)
-    );
+    always @(*) begin
+        cpu_mem_ready = 0;  // cpu memory requests cannot be serviced
+        cpu_mem_rdata = 8'h00;
+    end
 
 endmodule

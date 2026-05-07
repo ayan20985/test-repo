@@ -37,6 +37,7 @@ module ocpu_core (
 	output reg [7:0] page_next;
 	input wire page_done;
 	input wire page_loading;
+	output wire page_interrupt;  // pulse: page boundary reached (PC==15)
 	output wire [3:0] iram_rd_slot;
 	input wire [16:0] iram_rd_data;
 	output reg iram_wr_en;
@@ -153,6 +154,7 @@ module ocpu_core (
 	assign dbg_sr = sr;
 	assign dbg_ir = {ir_op, ir_sub};
 	assign dbg_pc = pc;
+	assign page_interrupt = (pc == 4'hf) && (state == ST_FETCH);  // signal when PC at page boundary
 	reg [8:0] alu_result;
 	reg [7:0] alu_op_b;
 	always @(*) begin
@@ -247,10 +249,17 @@ module ocpu_core (
 				ST_FETCH:
 					if (!run_enable)
 						state <= ST_HALTED;
+					else if (pc == 4'hf) begin
+						// page boundary: halt and request page load
+						page_req <= 1;
+						page_next <= page_reg + 1;  // auto-increment page on boundary
+						state <= ST_PAGE_REQ;
+					end
 					else begin
 						ir_op <= iram_rd_data[15:12];
 						ir_sub <= iram_rd_data[11:8];
 						ir_imm <= iram_rd_data[7:0];
+						pc <= pc + 1;  // increment PC for next instruction
 						state <= ST_DECODE;
 					end
 				ST_DECODE:
@@ -550,18 +559,8 @@ module ocpu_core (
 						default:
 							;
 					endcase
-					if (state == ST_FETCH) begin
-						if (pc == 4'hf) begin
-							page_next <= page_reg + 8'h01;
-							page_req <= 1;
-							state <= ST_PAGE_REQ;
-						end
-						else
-							pc <= pc + 1;
-					end
-					else if (ir_op == OP_FARJMP)
-						page_reg <= page_next;
-					else if ((state == ST_PAGE_REQ) && page_req)
+					// PC increment happens in ST_FETCH, not here
+					if (ir_op == OP_FARJMP)
 						page_reg <= page_next;
 				end
 				ST_HALTED:
