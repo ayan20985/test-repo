@@ -8,6 +8,7 @@ module ocpu_core (
 	page_next,
 	page_done,
 	page_loading,
+	page_interrupt,
 	iram_rd_slot,
 	iram_rd_data,
 	iram_wr_en,
@@ -37,6 +38,7 @@ module ocpu_core (
 	output reg [7:0] page_next;
 	input wire page_done;
 	input wire page_loading;
+	output wire page_interrupt;  // pulse: page boundary reached (PC==15)
 	output wire [3:0] iram_rd_slot;
 	input wire [16:0] iram_rd_data;
 	output reg iram_wr_en;

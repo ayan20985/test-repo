@@ -8,6 +8,7 @@ module ocpu_core (
 	page_next,
 	page_done,
 	page_loading,
+	page_interrupt,
 	iram_rd_slot,
 	iram_rd_data,
 	iram_wr_en,
