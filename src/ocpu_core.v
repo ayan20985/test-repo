@@ -4,8 +4,6 @@ module ocpu_core (
 	rst_n,
 	run_enable,
 	is_halted,
-	page_req,
-	page_next,
 	page_done,
 	page_loading,
 	page_interrupt,
@@ -20,22 +18,12 @@ module ocpu_core (
 	mem_wdata,
 	mem_ready,
 	mem_rdata,
-	page_reg,
-	dbg_a,
-	dbg_x,
-	dbg_y,
-	dbg_sp,
-	dbg_sr,
-	dbg_ir,
-	dbg_pc,
-	out_pc
+	page_reg
 );
 	input wire clk;
 	input wire rst_n;
 	input wire run_enable;
 	output wire is_halted;
-	output reg page_req;
-	output reg [7:0] page_next;
 	input wire page_done;
 	input wire page_loading;
 	output wire page_interrupt;  // pulse: page boundary reached (PC==15)
@@ -51,14 +39,6 @@ module ocpu_core (
 	input wire mem_ready;
 	input wire [7:0] mem_rdata;
 	output reg [7:0] page_reg;
-	output wire [7:0] dbg_a;
-	output wire [7:0] dbg_x;
-	output wire [7:0] dbg_y;
-	output wire [7:0] dbg_sp;
-	output wire [7:0] dbg_sr;
-	output wire [7:0] dbg_ir;
-	output wire [3:0] dbg_pc;
-	output wire [3:0] out_pc;
 	reg [7:0] a;
 	reg [7:0] x;
 	reg [7:0] y;
@@ -150,13 +130,6 @@ module ocpu_core (
 	assign is_halted = (state == ST_HALTED) || (state == ST_PAGE_REQ) || (state == ST_PAGE_WAIT)
 	                || (state == ST_MEM_READ) || (state == ST_MEM_WRITE)
 	                || (state == ST_IND_Y1)   || (state == ST_IND_Y2);
-	assign dbg_a = a;
-	assign dbg_x = x;
-	assign dbg_y = y;
-	assign dbg_sp = sp;
-	assign dbg_sr = sr;
-	assign dbg_ir = {ir_op, ir_sub};
-	assign dbg_pc = pc;
 	reg page_interrupt_r;
 	assign page_interrupt = page_interrupt_r;
 	reg wrap_pending;  // set when slot 15 is fetched; triggers page swap after execute
