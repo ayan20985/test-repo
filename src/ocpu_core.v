@@ -1,4 +1,4 @@
-\default_nettype none
+`default_nettype none
 
 module ocpu_core (
     input  wire        clk,
@@ -6,6 +6,15 @@ module ocpu_core (
     
     input  wire        run_enable,
     output wire        is_halted,
+`ifdef OCPU_SIM
+    output wire [7:0]  dbg_a,
+    output wire [7:0]  dbg_x,
+    output wire [7:0]  dbg_y,
+    output wire [7:0]  dbg_sp,
+    output wire [7:0]  dbg_sr,
+    output wire [7:0]  dbg_ir,
+    output wire [15:0] dbg_pc,
+`endif
 
     output wire [15:0] out_pc,
     input  wire        force_pc_en,
@@ -48,6 +57,15 @@ module ocpu_core (
     
     assign is_halted = (state == STATE_HALTED);
     assign out_pc = pc;
+`ifdef OCPU_SIM
+    assign dbg_a = a;
+    assign dbg_x = x;
+    assign dbg_y = y;
+    assign dbg_sp = sp;
+    assign dbg_sr = sr;
+    assign dbg_ir = ir;
+    assign dbg_pc = pc;
+`endif
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -242,7 +260,7 @@ module ocpu_core (
                 end
                 
                 STATE_POP: begin
-                    mem_req <= 1; mem_rw <= 0; mem_addr <= {8'h01, sp + 1};
+                    mem_req <= 1; mem_rw <= 0; mem_addr <= {8'h01, sp + 8'd1};
                     if (mem_ready) begin
                         sp <= sp + 1;
                         mem_req <= 0;
@@ -260,6 +278,9 @@ module ocpu_core (
 
                 STATE_HALTED: begin
                     if (run_enable) state <= STATE_FETCH;
+                end
+                default: begin
+                    state <= STATE_FETCH;
                 end
             endcase
         end
