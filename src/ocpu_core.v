@@ -561,8 +561,6 @@ module ocpu_core (
 							;
 					endcase
 					// PC increment happens in ST_FETCH, not here
-					if (ir_op == OP_FARJMP)
-						page_reg <= page_next;
 				end
 				ST_HALTED:
 					if (run_enable)

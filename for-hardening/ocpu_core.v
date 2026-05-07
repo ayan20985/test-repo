@@ -561,10 +561,6 @@ module ocpu_core (
 						else
 							pc <= pc + 1;
 					end
-					else if (ir_op == OP_FARJMP)
-						page_reg <= page_next;
-					else if ((state == ST_PAGE_REQ) && page_req)
-						page_reg <= page_next;
 				end
 				ST_HALTED:
 					if (run_enable)
