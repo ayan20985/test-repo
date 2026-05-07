@@ -18,6 +18,9 @@ project:
   source_files:
     - "project.v"
     - "qspi_memory.v"
+    - "page_controller.v"
+    - "iram_regfile.v"
+    - "spi_memory.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 pinout:
