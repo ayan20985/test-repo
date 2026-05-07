@@ -116,8 +116,8 @@ module ospi_memory (
                             end
                             byte_count <= 0;
                         end else if (byte_count == 3) begin
-                            // after addr (3 bytes), capture it
-                            mem_addr <= {shift_in[23:0], io_i_sync};
+                            // shift_in has been updated this edge: [39:8] = cmd,addr_hi,addr_mid,addr_lo
+                            mem_addr <= shift_in[31:8];
                         end
                     end
 
