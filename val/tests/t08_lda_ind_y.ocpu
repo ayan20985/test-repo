@@ -1,10 +1,10 @@
-    ; create pointer at zp $10 -> points to $0030
+    ; create pointer at zp $20/$21 -> points to $0030 (avoids code overlap)
     lda #$2b
-    sta $0010
+    sta $0020
     lda #$00
-    sta $0011
+    sta $0021
     ldy #$05
-    lda ($10),y
+    lda ($20),y
     jmp done
 
     .org $0030
