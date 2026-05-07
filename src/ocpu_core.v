@@ -147,7 +147,9 @@ module ocpu_core (
 	reg [4:0] state;
 	assign iram_rd_slot = pc;
 	assign out_pc = pc;
-	assign is_halted = ((state == ST_HALTED) || (state == ST_PAGE_REQ)) || (state == ST_PAGE_WAIT);
+	assign is_halted = (state == ST_HALTED) || (state == ST_PAGE_REQ) || (state == ST_PAGE_WAIT)
+	                || (state == ST_MEM_READ) || (state == ST_MEM_WRITE)
+	                || (state == ST_IND_Y1)   || (state == ST_IND_Y2);
 	assign dbg_a = a;
 	assign dbg_x = x;
 	assign dbg_y = y;
@@ -155,7 +157,9 @@ module ocpu_core (
 	assign dbg_sr = sr;
 	assign dbg_ir = {ir_op, ir_sub};
 	assign dbg_pc = pc;
-	assign page_interrupt = (pc == 4'hf) && (state == ST_FETCH);  // signal when PC at page boundary
+	reg page_interrupt_r;
+	assign page_interrupt = page_interrupt_r;
+	reg wrap_pending;  // set when slot 15 is fetched; triggers page swap after execute
 	reg [8:0] alu_result;
 	reg [7:0] alu_op_b;
 	always @(*) begin
@@ -227,14 +231,18 @@ module ocpu_core (
 			mdr <= 8'h00;
 			eff_addr <= 16'h0000;
 			t1 <= 8'h00;
+			page_interrupt_r <= 0;
+			wrap_pending <= 0;
 		end
 		else begin
 			iram_wr_en <= 0;
 			mem_req <= mem_req;
+			page_interrupt_r <= 0;
 			case (state)
 				ST_RESET: begin
 					page_next <= 8'h00;
 					page_req <= 1;
+					wrap_pending <= 0;
 					state <= ST_PAGE_REQ;
 				end
 				ST_PAGE_REQ:
@@ -245,22 +253,30 @@ module ocpu_core (
 				ST_PAGE_WAIT:
 					if (page_done) begin
 						pc <= 4'h0;
+						wrap_pending <= 0;
 						state <= ST_FETCH;
 					end
 				ST_FETCH:
 					if (!run_enable)
 						state <= ST_HALTED;
-					else if (pc == 4'hf) begin
-						// page boundary: halt and request page load
+					else if (wrap_pending) begin
+						// previous slot-15 instruction returned here without passing through ST_EXECUTE
+						wrap_pending <= 0;
+						page_interrupt_r <= 1;
 						page_req <= 1;
-						page_next <= page_reg + 1;  // auto-increment page on boundary
+						page_next <= page_reg + 1;
 						state <= ST_PAGE_REQ;
-					end
-					else begin
+					end else begin
 						ir_op <= iram_rd_data[15:12];
 						ir_sub <= iram_rd_data[11:8];
 						ir_imm <= iram_rd_data[7:0];
-						pc <= pc + 1;  // increment PC for next instruction
+						if (pc == 4'hf) begin
+							// slot 15: fetch and execute it, wrap PC, page-swap after execute
+							pc <= 4'h0;
+							wrap_pending <= 1;
+						end else begin
+							pc <= pc + 1;
+						end
 						state <= ST_DECODE;
 					end
 				ST_DECODE:
@@ -440,7 +456,14 @@ module ocpu_core (
 						mem_addr <= {data_page, sp + 8'h01};
 					end
 				ST_EXECUTE: begin
-					state <= ST_FETCH;
+					if (wrap_pending) begin
+						wrap_pending <= 0;
+						page_interrupt_r <= 1;
+						page_req <= 1;
+						page_next <= page_reg + 1;
+						state <= ST_PAGE_REQ;
+					end else
+						state <= ST_FETCH;
 					case (ir_op)
 						OP_LDA:
 							;
@@ -469,10 +492,10 @@ module ocpu_core (
 								sr[2] <= alu_result[7];
 							end
 						OP_BR:
-							if (branch_taken)
+							if (branch_taken && !wrap_pending)
 								pc <= pc + ir_imm[3:0];
-						OP_JMP: pc <= ir_imm[3:0];
-						OP_JSR: pc <= ir_imm[3:0];
+						OP_JMP: if (!wrap_pending) pc <= ir_imm[3:0];
+						OP_JSR: if (!wrap_pending) pc <= ir_imm[3:0];
 						OP_RTS:
 							;
 						OP_FARJMP: begin
