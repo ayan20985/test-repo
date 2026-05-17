@@ -57,28 +57,30 @@ module ospi_memory (
             sck_prev <= sck_sync;
     end
 
-    // shift register for incoming OSPI data: 32 bits for cmd+addr (4 bytes)
-    // data byte (5th byte) is consumed directly from io_i_sync, not shifted in.
-    reg [31:0] shift_in;
+    // byte-streamed protocol: incoming bytes are written directly into the
+    // address/data output registers driven by byte_count, so no separate
+    // 32-bit shift register is needed. cmd_byte is also shrunk to two
+    // single-bit flags (read vs. write) latched when byte 0 arrives.
     reg [2:0]  byte_count;  // 0-4 for 5 bytes total
     reg [7:0]  shift_out;
     reg [7:0]  read_data;
-    reg [7:0]  cmd_byte;
+    reg        is_read_cmd;
+    reg        is_write_cmd;
 
     assign io_o = shift_out;
     assign io_oe = (cs_sync && byte_count >= 3'd4) ? 8'hFF : 8'h00;  // drive output during data phase
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            shift_in    <= 32'h0;
-            byte_count  <= 0;
-            shift_out   <= 8'h0;
-            read_data   <= 8'h0;
-            mem_addr    <= 24'h0;
-            mem_wdata   <= 8'h0;
-            mem_write   <= 0;
-            mem_read    <= 0;
-            cmd_byte    <= 8'h0;
+            byte_count   <= 0;
+            shift_out    <= 8'h0;
+            read_data    <= 8'h0;
+            mem_addr     <= 24'h0;
+            mem_wdata    <= 8'h0;
+            mem_write    <= 0;
+            mem_read     <= 0;
+            is_read_cmd  <= 0;
+            is_write_cmd <= 0;
         end else begin
             mem_write <= 0;
             mem_read  <= 0;
@@ -86,42 +88,46 @@ module ospi_memory (
             if (cs_sync) begin
                 // chip select active
                 if (sck_rising) begin
-                    // shift in 8 bits from master on SCK rising edge
-                    shift_in <= {shift_in[23:0], io_i_sync};
-
                     if (byte_count < 5) begin
-                        byte_count <= byte_count + 1;
-
-                        // after byte 0 (cmd), latch command
-                        if (byte_count == 0)
-                            cmd_byte <= io_i_sync;
-
-                        // after byte 4 (data), transaction complete
-                        if (byte_count == 4) begin
-                            mem_wdata <= io_i_sync;
-                            if (cmd_byte == 8'h02) begin
-                                // write command
-                                mem_write <= 1;
-                            end else if (cmd_byte == 8'h03) begin
-                                // read command
-                                mem_read <= 1;
-                                read_data <= mem_rdata;
+                        case (byte_count)
+                            // byte 0: command. latch the two cmd-decode flags
+                            // instead of keeping the whole 8-bit cmd_byte.
+                            3'd0: begin
+                                is_write_cmd <= (io_i_sync == 8'h02);
+                                is_read_cmd  <= (io_i_sync == 8'h03);
                             end
+                            // bytes 1-3: address arrives MSB first. write directly
+                            // into the corresponding slice of the output address reg.
+                            3'd1: mem_addr[23:16] <= io_i_sync;
+                            3'd2: mem_addr[15:8]  <= io_i_sync;
+                            3'd3: mem_addr[7:0]   <= io_i_sync;
+                            // byte 4: data byte completes the transaction.
+                            3'd4: begin
+                                mem_wdata <= io_i_sync;
+                                if (is_write_cmd)
+                                    mem_write <= 1;
+                                else if (is_read_cmd) begin
+                                    mem_read  <= 1;
+                                    read_data <= mem_rdata;
+                                end
+                            end
+                            default: ;
+                        endcase
+
+                        if (byte_count == 4)
                             byte_count <= 0;
-                        end else if (byte_count == 3) begin
-                            // RHS shift_in is pre-update; combine with io_i_sync for full addr
-                            mem_addr <= {shift_in[23:0], io_i_sync};
-                        end
+                        else
+                            byte_count <= byte_count + 1;
                     end
 
-                    // drive shift_out for data phase
+                    // drive shift_out for data phase (preserves existing 1-cycle
+                    // OSPI read pipeline behaviour expected by the master)
                     if (byte_count == 4)
                         shift_out <= read_data;
                 end
             end else begin
-                // chip select inactive: reset
+                // chip select inactive: reset byte counter and output driver
                 byte_count <= 0;
-                shift_in   <= 32'h0;
                 shift_out  <= 8'h0;
             end
         end

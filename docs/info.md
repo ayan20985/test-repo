@@ -7,112 +7,108 @@ You can also include images in this folder and reference them in the markdown. E
 ## desc
 quick and dirty repo at the LatchUp Conference, will refurbish repo for a proper submission.
 
-## minimized MIPS-adjacent OCPU instruction set
-the instruction set of the minimized MIPS-adjacent cpu is as follows:
-
-0000 ldi imm      ; load immediate value into accumulator (a = imm)
-0001 lda addr     ; load accumulator from memory (a = memory[addr])
-0010 sta addr     ; store accumulator to memory (memory[addr] = a)
-0011 lda [addr]   ; load accumulator from indirect address (a = memory[memory[addr]])
-0100 sta [addr]   ; store accumulator to indirect address (memory[memory[addr]] = a)
-0101 add addr     ; add memory to accumulator (a = a + memory[addr])
-0110 adc addr     ; add memory and carry to accumulator (a = a + memory[addr] + carry)
-0111 nand addr    ; bitwise nand accumulator and memory (a = ~(a & memory[addr]))
-1000 shr          ; shift accumulator right by 1 bit
-1001 jmp addr     ; jump to address
-1010 jz addr      ; jump if accumulator is zero
-1011 jc addr      ; jump if carry flag is set
-1100 call addr    ; call subroutine (push pc, jump to addr)
-1101 ret          ; return from subroutine (pop pc)
-1110 push         ; push accumulator to stack
-1111 pop          ; pop from stack to accumulator
-
-## minimized 6502 OCPU instruction set (CISC)
-this 6-bit opcode instruction set is heavily paired-down but explicitly mapped to the core 6502 architecture. by including the x and y registers in hardware, we natively support the 6502's indexed addressing modes, which are heavily used by C compilers for arrays and pointers.
-
-memory & immediate operations:
-- `lda #imm` / `ldx #imm` / `ldy #imm`  ; load immediate (a/x/y = imm)
-- `lda addr` / `ldx addr` / `ldy addr`  ; load from memory
-- `sta addr` / `stx addr` / `sty addr`  ; store to memory
-- `lda addr,x` / `sta addr,x`           ; absolute x-indexed (target = addr + x)
-- `lda (addr),y` / `sta (addr),y`       ; indirect y-indexed (target = memory[addr] + y)
-
-alu (math & logic):
-- `adc addr`     ; add with carry (a = a + memory[addr] + c)
-- `sbc addr`     ; subtract with carry (a = a - memory[addr] - !c)
-- `and addr`     ; bitwise and (a = a & memory[addr])
-- `eor addr`     ; exclusive or (a = a ^ memory[addr])
-- `ora addr`     ; bitwise or (a = a | memory[addr])
-- `asl`          ; arithmetic shift left (shifts accumulator, pushes MSB to carry)
-- `lsr`          ; logical shift right (shifts accumulator, pushes LSB to carry)
-- `inx` / `dex`  ; increment / decrement x
-- `iny` / `dey`  ; increment / decrement y
-
-register transfers:
-- `tax` / `txa`  ; transfer a to x / x to a
-- `tay` / `tya`  ; transfer a to y / y to a
-
-status flags & control:
-- `sec` / `clc`  ; set / clear carry flag
-- `sei` / `cli`  ; set / clear interrupt disable
-
-control flow & subroutines:
-- `jmp addr`     ; unconditional jump
-- `beq addr`     ; branch on result zero (zero flag set)
-- `bne addr`     ; branch on not zero (zero flag clear)
-- `bcs addr`     ; branch on carry set
-- `bcc addr`     ; branch on carry clear
-- `jsr addr`     ; jump to subroutine (pushes PC to stack)
-- `rts`          ; return from subroutine (pops PC)
-- `rti`          ; return from interrupt (pops SR, then PC)
-- `pha` / `pla`  ; push accumulator / pull accumulator
-
 ## datapath architecture
 the ocpu features a single-core architectural approach utilizing a multi-level fsm hierarchy to manage execution:
 - master fsm: a top-level controller responsible for issuing global states such as `run` and `halt`.
 - internal core fsm: a local multi-cycle fsm that handles the fetch-decode-execute loop.
 - accumulator-based logic: to severely constrain the flip-flop footprint required per core, the datapath relies purely on an accumulator and strictly defined index registers (x, y) rather than a generalized register file.
 
-## features
+## features (old)
 - the programmer-visible registers include a 6-bit accumulator (a), index registers (x, y), and a 6-bit stack pointer (sp).
 - the internal datapath consists of a 16-bit program counter (pc) plus 6-bit instruction register (ir) and memory data register (mdr).
 - the peripheral registers include interrupt vector and enable registers. to securely access mbits of external memory beyond the standard 64kb address space without complicating external peripheral logic, a zero-page memory-mapped i/o (mmio) banking register is used. writing to address `0xff` (e.g., `sta $ff`) inherently flips the upper memory lines sent from the cpu out to the external serial memory, maintaining hardware simplicity and 100% isa compatibility with standard 6502 compilers.
 - the controllable target pll behaves independently so the cpu clock speed can be dynamically governed externally to control power draw and test frequency bounds, the pll will be muxed with the external clock the tt chip so that we can avoid it if need be.
 - we will also add a very small piece of cache that we can read to see how much overclocking we have done as our io is limited to 50mhz maybe higher if we don't use tt pcb. we can then query this cache at 50mhz and see what the overclocked rate is.
 
-## instructions mapped to cycles
-| instruction | mode | cycle 0 | cycle 1 | cycle 2 | cycle 3 | cycle 4 | cycle 5 |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `lda / ldx / ldy #imm` | immediate | fetch opcode | fetch imm (update reg) | - | - | - | - |
-| `lda / ldx / ldy addr` | absolute | fetch opcode | fetch addr_l | fetch addr_h | read memory (update reg) | - | - |
-| `sta / stx / sty addr` | absolute | fetch opcode | fetch addr_l | fetch addr_h | write register to mem | - | - |
-| `lda addr,x` | abs, x | fetch opcode | fetch addr_l | fetch addr_h | read mem at addr+x | - | - |
-| `sta addr,x` | abs, x | fetch opcode | fetch addr_l | fetch addr_h | write mem at addr+x | - | - |
-| `lda (addr),y` | ind, y | fetch opcode | fetch zp_ptr | read ptr_l | read ptr_h | read mem at ptr+y | - |
-| `sta (addr),y` | ind, y | fetch opcode | fetch zp_ptr | read ptr_l | read ptr_h | write mem at ptr+y| - |
-| `adc / sbc / etc. addr`| absolute | fetch opcode | fetch addr_l | fetch addr_h | read memory | alu execute | - |
-| `asl / lsr` | accumulator | fetch opcode | execute shift | - | - | - | - |
-| `inx/dex / iny/dey` | implied | fetch opcode | execute inc/dec | - | - | - | - |
-| `tax/txa / tay/tya` | implied | fetch opcode | execute transfer | - | - | - | - |
-| `sec/clc / sei/cli` | implied | fetch opcode | execute flag update| - | - | - | - |
-| `jmp addr` | absolute | fetch opcode | fetch addr_l | fetch addr_h (pc = addr)| - | - | - |
-| `beq / bne / bcs / bcc`| relative | fetch opcode | fetch offset | offset pc (if true) | - | - | - |
-| `jsr addr` | absolute | fetch opcode | fetch addr_l | push pc_h | push pc_l | fetch addr_h | - |
-| `rts` | implied | fetch opcode | pop pc_l | pop pc_h | inc pc | - | - |
-| `rti` | implied | fetch opcode | pop sr | pop pc_l | pop pc_h | - | - |
-| `pha` | implied | fetch opcode | push a | - | - | - | - |
-| `pla` | implied | fetch opcode | pop a | - | - | - | - |
+## features
+- the programmer-visible registers include 8-bit `a`, `x`, `y`, and `sp`, plus 8-bit `page_reg` (instruction page) and `data_page` (data address high byte).
+- the instruction path uses a 3-bit `pc` within an 8-slot iRAM page, and a latched instruction split into `ir_op`, `ir_sub`, and `ir_imm`, with an 8-bit `mdr` for data reads.
+- instruction storage is an 8-slot iRAM with a dirty bit per slot. the external fpga loads pages over the ospi interface, and the core raises a page interrupt after slot 7 executes.
+- data memory accesses use a 16-bit address built as `{data_page, imm8}` and are serviced by the external fpga via the ospi register window.
+- status flags implemented are carry, zero, negative, and interrupt disable. there are no hardware interrupt vector or enable registers in this revision.
 
-## opcodes
-        0x00        0x01        0x02        0x03
-0x00    LDA #       LDA abs     LDA abs,x    LDA (abs),y
-0x04    LDX #       LDX abs     LDY #        LDY abs
-0x08    STA abs     STA abs,x   STA (abs),y  STX abs
-0x0C    STY abs     ADC abs     SBC abs      AND abs
-0x10    EOR abs     ORA abs     ASL          LSR
-0x14    INX         DEX         INY          DEY
-0x18    TAX         TXA         TAY          TYA
-0x1C    SEC         CLC         SEI          CLI
-0x20    JMP abs     JSR abs     RTS          RTI
-0x24    PHA         PLA         BEQ          BNE
-0x28    BCS         BCC         —            —
+## Opcodes
+```
+Main Opcodes (4-bit)
+op[3:0] Mnemonic        Description                     Sub-field                               Notes
+0x0     LDA             Load A          sub[1:0]:       00=imm, 01=abs, 10=abs+X, 11=(zp),Y     Z, N flags
+0x1     STA             Store A         sub[1:0]:       00=abs, 01=abs+X, 10=(zp),Y             —
+0x2     LDX             Load X          sub[0]:         0=imm, 1=abs                            Z, N flags
+0x3     LDY             Load Y          sub[0]:         0=imm, 1=abs                            Z, N flags
+0x4     STX             Store X         —               (abs only)                              —
+0x5     STY             Store Y         —               (abs only)                              —
+0x6     ALU             Arith/Logic                     See ALU table                           C, Z, N flags
+0x7     BR              Branch                          See BR table                            —
+0x8     JMP             Jump (intra-page)               imm8[3:0] = target PC                   —
+0x9     JSR             Jump Subroutine                 imm8[3:0] = target PC                   Push PC+1 to stack
+0xA     RTS             Return from Subroutine          —                                       Pop PC from stack
+0xB     FARJMP          Far Jump (page cross)           sub[3]: 0=rel, 1=abs                    Page switch + reload
+0xC     REG             Register ops                    See REG table                           Variable
+0xD     LDSP            Load/Store page regs            See LDSP table                          —
+0xE     SMOD            Self-Modify iRAM                sub[3:0] = slot                         Patch imm8 field
+0xF     SYS             System                          See SYS table                           —
+```
+
+```
+ALU Sub-opcodes (op=0x6, sub[3:0])
+sub[3:0]                Mode            Operation               Flags
+0x0–0x3                 Memory          ADD / ADC / SUB / SBC   C, Z, N
+0x4–0x7                 Memory          AND / ORA / EOR / CMP   Z, N (CMP flags only)
+0x8–0xB                 Shift           ASL / LSR / ROL / ROR   C, Z, N (on A)
+0x8–0xF with sub[3]=1   Immediate       ADD# / ADC# / SUB#...   C, Z, N 
+
+Encoding rule: sub[3]=0 → fetch operand from {data_page, imm8}; sub[3]=1 → operand is imm8.
+```
+
+```
+Branch Conditions (op=0x7, sub[3:0])
+sub[3:0]        Branch  Condition
+0x0             BEQ     if Z (equal to zero)
+0x1             BNE     if !Z (not equal to zero)
+0x2             BCS     if C (carry set)
+0x3             BCC     if !C (carry clear)
+0x4             BMI     if N (minus / negative)
+0x5             BPL     if !N (plus / positive)
+
+Branch offset: imm8[3:0] (4-bit signed, same page only).
+```
+
+```
+Register Ops (op=0xC, sub[3:0])
+sub[3:0]        Instruction     Effect
+0x0             TAX             X ← A
+0x1             TXA             A ← X
+0x2             TAY             Y ← A
+0x3             TYA             A ← Y
+0x4             INX             X ← X + 1
+0x5             DEX             X ← X - 1
+0x6             INY             Y ← Y + 1
+0x7             DEY             Y ← Y - 1
+0x8             PHA             Push A
+0x9             PLA             Pop → A
+0xA             TSX             X ← SP
+0xB             TXS             SP ← X
+0xF             NOP             No-op
+```
+
+```
+Load/Store Page Regs (op=0xD, sub[3:0])
+sub[3:0]        Instruction     Effect
+0x0             LDA_DP          A ← data_page
+0x1             STA_DP          data_page ← A
+0x2             LDA_PG          A ← page_reg
+0x3             LDSP            SP ← imm8
+0x4             STSP            A ← SP
+```
+
+```
+System Ops (op=0xF, sub[3:0])
+sub[3:0]        Instruction     Effect
+0x0             HLT             Halt CPU
+0x1             SEI             Set Interrupt Enable
+0x2             CLI             Clear Interrupt Enable
+0x3             SEC             Set Carry
+0x4             CLC             Clear Carry
+0x5             CLV             Clear Overflow
+0x6             RTI             Return from Interrupt
+```

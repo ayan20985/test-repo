@@ -50,8 +50,10 @@ module ocpu_core (
 	reg [3:0] ir_sub;
 	reg [7:0] ir_imm;
 	reg [7:0] mdr;
-	reg [15:0] eff_addr;
-	reg [7:0] t1;
+	// note: eff_addr eliminated. mem_addr is written directly in ST_DECODE,
+	// and re-used during ST_IND_Y1/2 (incremented and replaced in place).
+	// note: t1 eliminated. mdr doubles as the low-byte temp during (zp),Y resolution
+	// because mdr is not consumed until the final ST_MEM_READ phase.
 	localparam [3:0] OP_LDA = 4'h0;
 	localparam [3:0] OP_STA = 4'h1;
 	localparam [3:0] OP_LDX = 4'h2;
@@ -132,35 +134,28 @@ module ocpu_core (
 	reg wrap_pending;  // set when slot 7 is fetched; triggers page swap after execute
 	reg [8:0] alu_result;
 	reg [7:0] alu_op_b;
+	// unified ALU: a single case on the low 3 bits drives one adder/logic block.
+	// the high bit (sub[3]) only changes the operand source (mdr vs ir_imm).
+	// shift overrides (sub[3]=0, sub == 0x8/0x9) are preserved for the ISA
+	// even though the current ST_DECODE never routes them here (kept for spec).
 	always @(*) begin
 		alu_op_b = (ir_sub[3] ? ir_imm : mdr);
-		alu_result = 9'h000;
-		if (!ir_sub[3])
-			case (ir_sub)
-				ALU_ADD: alu_result = {1'b0, a} + {1'b0, alu_op_b};
-				ALU_ADC: alu_result = ({1'b0, a} + {1'b0, alu_op_b}) + {8'h00, sr[0]};
-				ALU_SUB: alu_result = {1'b0, a} - {1'b0, alu_op_b};
-				ALU_SBC: alu_result = ({1'b0, a} - {1'b0, alu_op_b}) - {8'h00, ~sr[0]};
-				ALU_AND: alu_result = {1'b0, a & alu_op_b};
-				ALU_ORA: alu_result = {1'b0, a | alu_op_b};
-				ALU_EOR: alu_result = {1'b0, a ^ alu_op_b};
-				ALU_CMP: alu_result = {1'b0, a} - {1'b0, alu_op_b};
-				ALU_ASL: alu_result = {a[7], a[6:0], 1'b0};
-				ALU_LSR: alu_result = {a[0], 1'b0, a[7:1]};
-				default: alu_result = 9'h000;
-			endcase
-		else
-			case (ir_sub[2:0])
-				ALU_ADD[2:0]: alu_result = {1'b0, a} + {1'b0, alu_op_b};
-				ALU_ADC[2:0]: alu_result = ({1'b0, a} + {1'b0, alu_op_b}) + {8'h00, sr[0]};
-				ALU_SUB[2:0]: alu_result = {1'b0, a} - {1'b0, alu_op_b};
-				ALU_SBC[2:0]: alu_result = ({1'b0, a} - {1'b0, alu_op_b}) - {8'h00, ~sr[0]};
-				ALU_AND[2:0]: alu_result = {1'b0, a & alu_op_b};
-				ALU_ORA[2:0]: alu_result = {1'b0, a | alu_op_b};
-				ALU_EOR[2:0]: alu_result = {1'b0, a ^ alu_op_b};
-				ALU_CMP[2:0]: alu_result = {1'b0, a} - {1'b0, alu_op_b};
-				default: alu_result = 9'h000;
-			endcase
+		case (ir_sub[2:0])
+			3'h0:    alu_result = {1'b0, a} + {1'b0, alu_op_b};                    // ADD / ADD#
+			3'h1:    alu_result = ({1'b0, a} + {1'b0, alu_op_b}) + {8'h00, sr[0]}; // ADC / ADC#
+			3'h2:    alu_result = {1'b0, a} - {1'b0, alu_op_b};                    // SUB / SUB#
+			3'h3:    alu_result = ({1'b0, a} - {1'b0, alu_op_b}) - {8'h00, ~sr[0]};// SBC / SBC#
+			3'h4:    alu_result = {1'b0, a & alu_op_b};                            // AND
+			3'h5:    alu_result = {1'b0, a | alu_op_b};                            // ORA
+			3'h6:    alu_result = {1'b0, a ^ alu_op_b};                            // EOR
+			3'h7:    alu_result = {1'b0, a} - {1'b0, alu_op_b};                    // CMP
+			default: alu_result = 9'h000;
+		endcase
+		// shift override (only active when sub[3]=0 and sub==0x8/0x9)
+		if (!ir_sub[3] && (ir_sub == ALU_ASL))
+			alu_result = {a[7], a[6:0], 1'b0};
+		if (!ir_sub[3] && (ir_sub == ALU_LSR))
+			alu_result = {a[0], 1'b0, a[7:1]};
 	end
 	reg branch_taken;
 	always @(*)
@@ -173,6 +168,13 @@ module ocpu_core (
 			BR_BPL: branch_taken = ~sr[2];
 			default: branch_taken = 1'b0;
 		endcase
+
+	// shared inc/dec datapath for INX/DEX/INY/DEY. one 8-bit adder is muxed
+	// between x and y; ir_sub[1] selects which register, ir_sub[0] selects dec.
+	wire        idOpIsY  = ir_sub[1];
+	wire        idOpIsDec = ir_sub[0];
+	wire [7:0]  idOpSrc  = idOpIsY ? y : x;
+	wire [7:0]  idOpDst  = idOpIsDec ? (idOpSrc - 8'h01) : (idOpSrc + 8'h01);
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			state <= ST_RESET;
@@ -195,8 +197,6 @@ module ocpu_core (
 			ir_sub <= 4'h0;
 			ir_imm <= 8'h00;
 			mdr <= 8'h00;
-			eff_addr <= 16'h0000;
-			t1 <= 8'h00;
 			page_interrupt_r <= 0;
 			wrap_pending <= 0;
 		end
@@ -251,30 +251,30 @@ module ocpu_core (
 									state <= ST_EXECUTE;
 								end
 								2'b01: begin
-									eff_addr <= {data_page, ir_imm};
+									mem_addr <= {data_page, ir_imm};
 									state <= ST_MEM_READ;
 								end
 								2'b10: begin
-									eff_addr <= {data_page, ir_imm} + {8'h00, x};
+									mem_addr <= {data_page, ir_imm} + {8'h00, x};
 									state <= ST_MEM_READ;
 								end
 								2'b11: begin
-									eff_addr <= {data_page, ir_imm};
+									mem_addr <= {data_page, ir_imm};
 									state <= ST_IND_Y1;
 								end
 							endcase
 						OP_STA:
 							case (ir_sub[1:0])
 								2'b00: begin
-									eff_addr <= {data_page, ir_imm};
+									mem_addr <= {data_page, ir_imm};
 									state <= ST_MEM_WRITE;
 								end
 								2'b01: begin
-									eff_addr <= {data_page, ir_imm} + {8'h00, x};
+									mem_addr <= {data_page, ir_imm} + {8'h00, x};
 									state <= ST_MEM_WRITE;
 								end
 								2'b10: begin
-									eff_addr <= {data_page, ir_imm};
+									mem_addr <= {data_page, ir_imm};
 									state <= ST_IND_Y1;
 								end
 								default: state <= ST_EXECUTE;
@@ -287,7 +287,7 @@ module ocpu_core (
 								state <= ST_EXECUTE;
 							end
 							else begin
-								eff_addr <= {data_page, ir_imm};
+								mem_addr <= {data_page, ir_imm};
 								state <= ST_MEM_READ;
 							end
 						OP_LDY:
@@ -298,15 +298,15 @@ module ocpu_core (
 								state <= ST_EXECUTE;
 							end
 							else begin
-								eff_addr <= {data_page, ir_imm};
+								mem_addr <= {data_page, ir_imm};
 								state <= ST_MEM_READ;
 							end
 						OP_STX: begin
-							eff_addr <= {data_page, ir_imm};
+							mem_addr <= {data_page, ir_imm};
 							state <= ST_MEM_WRITE;
 						end
 						OP_STY: begin
-							eff_addr <= {data_page, ir_imm};
+							mem_addr <= {data_page, ir_imm};
 							state <= ST_MEM_WRITE;
 						end
 						OP_ALU:
@@ -315,7 +315,7 @@ module ocpu_core (
 							else if (ir_sub >= ALU_ASL)
 								state <= ST_EXECUTE;
 							else begin
-								eff_addr <= {data_page, ir_imm};
+								mem_addr <= {data_page, ir_imm};
 								state <= ST_MEM_READ;
 							end
 						OP_BR: state <= ST_EXECUTE;
@@ -330,6 +330,7 @@ module ocpu_core (
 						default: state <= ST_EXECUTE;
 					endcase
 				ST_MEM_READ:
+					// mem_addr was pre-loaded in ST_DECODE / ST_IND_Y2; just drive the request
 					if (mem_ready && mem_req) begin
 						mdr <= mem_rdata;
 						mem_req <= 0;
@@ -338,7 +339,6 @@ module ocpu_core (
 					else if (!mem_req && !mem_ready) begin
 						mem_req <= 1;
 						mem_rw <= 0;
-						mem_addr <= eff_addr;
 					end
 				ST_MEM_WRITE:
 					if (mem_ready && mem_req) begin
@@ -349,7 +349,6 @@ module ocpu_core (
 					else if (!mem_req && !mem_ready) begin
 						mem_req <= 1;
 						mem_rw <= 1;
-						mem_addr <= eff_addr;
 						case (ir_op)
 							OP_STA: mem_wdata <= a;
 							OP_STX: mem_wdata <= x;
@@ -358,27 +357,27 @@ module ocpu_core (
 						endcase
 					end
 				ST_IND_Y1:
+					// mdr is reused as the low-byte temp because the final read
+					// in ST_MEM_READ will overwrite it before any consumer sees it.
 					if (mem_ready && mem_req) begin
-						t1 <= mem_rdata;
+						mdr <= mem_rdata;
+						mem_addr <= mem_addr + 16'h1;
 						mem_req <= 0;
-						eff_addr <= eff_addr + 1;
 						state <= ST_IND_Y2;
 					end
 					else if (!mem_req && !mem_ready) begin
 						mem_req <= 1;
 						mem_rw <= 0;
-						mem_addr <= eff_addr;
 					end
 				ST_IND_Y2:
 					if (mem_ready && mem_req) begin
+						mem_addr <= {mem_rdata, mdr} + {8'h00, y};
 						mem_req <= 0;
-						eff_addr <= {mem_rdata, t1} + {8'h00, y};
 						state <= (ir_op == OP_STA ? ST_MEM_WRITE : ST_MEM_READ);
 					end
 					else if (!mem_req && !mem_ready) begin
 						mem_req <= 1;
 						mem_rw <= 0;
-						mem_addr <= eff_addr;
 					end
 				ST_PUSH:
 					if (mem_ready && mem_req) begin
@@ -482,25 +481,19 @@ module ocpu_core (
 									sr[1] <= y == 0;
 									sr[2] <= y[7];
 								end
-								REG_INX: begin
-									x <= x + 8'h01;
-									sr[1] <= (x == 8'hff);
-									sr[2] <= (~x[7] & (x == 8'h7f)) | (x[7] & ~(x == 8'hff));
+								// INX/DEX/INY/DEY share one inc/dec adder (idOpDst).
+								// flags are derived from the post-update value directly,
+								// removing the redundant 8-bit comparators in the prior
+								// implementation.
+								REG_INX, REG_DEX: begin
+									x      <= idOpDst;
+									sr[1]  <= ~|idOpDst;
+									sr[2]  <= idOpDst[7];
 								end
-								REG_DEX: begin
-									x <= x - 8'h01;
-									sr[1] <= (x == 8'h01);
-									sr[2] <= (~x[7] & (x == 8'h00)) | (x[7] & ~(x == 8'h80));
-								end
-								REG_INY: begin
-									y <= y + 8'h01;
-									sr[1] <= (y == 8'hff);
-									sr[2] <= (~y[7] & (y == 8'h7f)) | (y[7] & ~(y == 8'hff));
-								end
-								REG_DEY: begin
-									y <= y - 8'h01;
-									sr[1] <= (y == 8'h01);
-									sr[2] <= (~y[7] & (y == 8'h00)) | (y[7] & ~(y == 8'h80));
+								REG_INY, REG_DEY: begin
+									y      <= idOpDst;
+									sr[1]  <= ~|idOpDst;
+									sr[2]  <= idOpDst[7];
 								end
 								REG_TSX: x <= sp;
 								REG_TXS: sp <= x;
