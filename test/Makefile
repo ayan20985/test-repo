@@ -14,13 +14,17 @@ PROJECT_SOURCES = iram_regfile.v ocpu_core.v
 
 ifneq ($(GATES),yes)
 
-# RTL simulation:
+# RTL simulation: drives the cpu-core directly via tb.v
 SIM_BUILD	= sim_build/rtl
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
+VERILOG_SOURCES += $(PWD)/tb.v
+TOPLEVEL = tb
+COCOTB_TEST_MODULES = test
 
 else
 
-# Gate level simulation (full chip, requires gate_level_netlist.v):
+# Gate level simulation: only the flattened tt_um_ocpu netlist is available,
+# so use the chip-level tb (tb_chip.v) and the chip cocotb tests.
 SIM_BUILD	= sim_build/gl
 COMPILE_ARGS    += -DGL_TEST
 COMPILE_ARGS    += -DFUNCTIONAL
@@ -30,18 +34,14 @@ COMPILE_ARGS    += -DUNIT_DELAY=\#1
 VERILOG_SOURCES += $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog/primitives.v
 VERILOG_SOURCES += $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog/sky130_fd_sc_hd.v
 VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
+VERILOG_SOURCES += $(PWD)/tb_chip.v
+TOPLEVEL = tb_chip
+COCOTB_TEST_MODULES = test_chip
 
 endif
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
-
-# Testbench top:
-VERILOG_SOURCES += $(PWD)/tb.v
-TOPLEVEL = tb
-
-# cocotb python test module(s):
-COCOTB_TEST_MODULES = test
 
 # include cocotb's make rules
 include $(shell cocotb-config --makefiles)/Makefile.sim
