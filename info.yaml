@@ -23,7 +23,7 @@ project:
     - "macros/name.v"
     - "macro_placement.cfg"
     - "macros/name.gds"
-    - "macors/name.lef"
+    - "macros/name.lef"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 pinout:
