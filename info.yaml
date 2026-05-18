@@ -20,10 +20,6 @@ project:
     - "ocpu_core.v"
     - "project.v"
     - "ospi_memory.v"
-    - "macros/name.v"
-    - "macro_placement.cfg"
-    - "macros/name.gds"
-    - "macros/name.lef"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 pinout:
