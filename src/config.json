@@ -75,5 +75,9 @@
   "FP_MACRO_VERTICAL_HALO": 1,
   "FP_PDN_MACRO_HORIZONTAL_HALO": 1,
   "FP_PDN_MACRO_VERTICAL_HALO": 1,
-  "GRT_MACRO_EXTENSION":0
+  "GRT_MACRO_EXTENSION":0,
+  "VERILOG_FILES_BLACKBOX": ["dir::macros/names.v"],
+  "EXTRA_LEFS": ["dir::macros/names.lef"],
+  "EXTRA_GDS_FILES": ["dir::macros/names.gds"],
+  "MACRO_PLACEMENT_CFG": ["dir::macro_placement.cfg"]
 }
