@@ -2,8 +2,18 @@
 
 // OSPI (8-bit parallel) slave memory interface.
 // Acts as a responder to an external OSPI master (FPGA).
-// Protocol: master sends [8-bit cmd | 24-bit addr | 8-bit data], slave responds with data on reads.
-// Read  cmd = 0x03, Write cmd = 0x02.
+//
+// Single-byte protocol (legacy / data-req acks):
+//   master sends [8-bit cmd | 24-bit addr | 8-bit data], 5 bytes total.
+//   Read  cmd = 0x03, Write cmd = 0x02.
+//
+// Streaming-burst protocol (page load + writeback):
+//   master holds CS_N low past byte 4 and continues clocking SCK. each
+//   additional byte is treated as another data byte with mem_addr
+//   auto-incremented. CS_N rising tears the burst down. up to N data
+//   bytes can be transferred per burst, all on the cmd+addr issued at
+//   the start; this amortizes the 4-byte cmd/addr overhead.
+//
 // All data is transmitted/received on io[7:0] with io_oe controlling tri-state.
 
 module ospi_memory (
@@ -61,29 +71,43 @@ module ospi_memory (
     // address/data output registers driven by byte_count, so no separate
     // 32-bit shift register is needed. cmd_byte is also shrunk to two
     // single-bit flags (read vs. write) latched when byte 0 arrives.
+    //
+    // byte_count semantics:
+    //   0       = cmd byte being received
+    //   1..3    = address bytes (MSB first)
+    //   4       = data phase. SATURATES here; for streaming bursts every
+    //             subsequent SCK rising with CS_N still low pumps one more
+    //             data byte and auto-increments mem_addr.
     reg [2:0]  byte_count;
     reg [7:0]  shift_out;
     reg        is_read_cmd;
     reg        is_write_cmd;
+    // addr_inc_pending defers the mem_addr++ for streaming WRITES by one
+    // clk after a sck_rising in the data phase. without the defer the
+    // upstream iram-write path in project.v would see mem_write=1 at the
+    // ALREADY-incremented addr, off by one.
+    reg        addr_inc_pending;
 
     // io_o always carries the current shift_out latch. io_oe is asserted
-    // only during byte 4 of a READ transaction (slave drives data), and the
-    // chip is selected. on a WRITE, the master keeps driving the bus for
-    // byte 4 too, so the slave must stay tri-stated to avoid bus contention.
+    // for ALL data-phase bytes of a READ (byte_count == 4, streaming or
+    // single-byte), so the slave keeps driving for the entire burst. on
+    // a WRITE the master keeps driving the bus for all data bytes, so the
+    // slave must stay tri-stated to avoid bus contention.
     assign io_o  = shift_out;
     assign io_oe = (!cs_sync && is_read_cmd && byte_count == 3'd4)
                    ? 8'hFF : 8'h00;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            byte_count   <= 0;
-            shift_out    <= 8'h0;
-            mem_addr     <= 24'h0;
-            mem_wdata    <= 8'h0;
-            mem_write    <= 0;
-            mem_read     <= 0;
-            is_read_cmd  <= 0;
-            is_write_cmd <= 0;
+            byte_count       <= 0;
+            shift_out        <= 8'h0;
+            mem_addr         <= 24'h0;
+            mem_wdata        <= 8'h0;
+            mem_write        <= 0;
+            mem_read         <= 0;
+            is_read_cmd      <= 0;
+            is_write_cmd     <= 0;
+            addr_inc_pending <= 0;
         end else begin
             // these are 1-cycle pulses to the upstream mem-bus consumer
             mem_write <= 0;
@@ -113,37 +137,55 @@ module ospi_memory (
                             // which is well within one SCK half-period.
                             if (is_read_cmd) mem_read <= 1;
                         end
-                        // byte 4: data byte completes the transaction. on a
-                        // write, master drove this byte; capture and pulse
-                        // mem_write. on a read, the master sampled io_o and
-                        // we have nothing to do here.
+                        // byte 4: data phase. on a WRITE, capture this
+                        // byte and pulse mem_write at the CURRENT addr;
+                        // schedule a deferred mem_addr++ so the upstream
+                        // iram-write path sees this byte at the right
+                        // address. on a READ, the master sampled io_o
+                        // (shift_out) on this SCK edge - now we set up
+                        // the NEXT byte's data by bumping mem_addr and
+                        // re-pulsing mem_read so project.v's mux re-runs.
                         3'd4: begin
-                            mem_wdata <= io_i_sync;
-                            if (is_write_cmd)
+                            if (is_write_cmd) begin
+                                mem_wdata <= io_i_sync;
                                 mem_write <= 1;
+                                addr_inc_pending <= 1;
+                            end
+                            if (is_read_cmd) begin
+                                mem_addr <= mem_addr + 24'd1;
+                                mem_read <= 1;
+                            end
                         end
                         default: ;
                     endcase
 
                     byte_count <= (byte_count == 3'd4)
-                                  ? 3'd0
+                                  ? 3'd4                      // saturate
                                   : (byte_count + 3'd1);
+                end else if (addr_inc_pending) begin
+                    // deferred write-side addr bump, fires the cycle
+                    // AFTER the mem_write pulse so the upstream consumer
+                    // sees the write at the addr that was valid when the
+                    // pulse fired.
+                    mem_addr         <= mem_addr + 24'd1;
+                    addr_inc_pending <= 0;
                 end
 
                 // while we're in the data phase of a read, keep mirroring
                 // the currently-valid mem_rdata onto the output latch so
                 // shift_out is stable by the time the master clocks SCK
-                // for byte 4. (mem_rdata is registered upstream and was
-                // updated one cycle after the byte-3 mem_read pulse.)
+                // for the next streaming byte. mem_rdata is registered
+                // upstream and updates one clk after each mem_read pulse.
                 if (is_read_cmd && byte_count == 3'd4)
                     shift_out <= mem_rdata;
             end else begin
                 // CS_N high: chip deselected. reset byte counter so the
                 // next burst starts cleanly, and stop driving the bus.
-                byte_count   <= 0;
-                shift_out    <= 8'h0;
-                is_read_cmd  <= 0;
-                is_write_cmd <= 0;
+                byte_count       <= 0;
+                shift_out        <= 8'h0;
+                is_read_cmd      <= 0;
+                is_write_cmd     <= 0;
+                addr_inc_pending <= 0;
             end
         end
     end

@@ -1,2 +1,2 @@
-module name()
+module name();
 endmodule
